@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pleronic-v2';
+const CACHE_NAME = 'pleronic-v3';
 const ASSETS = [
   './',
   './index.html',
