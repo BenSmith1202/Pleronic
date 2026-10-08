@@ -12,6 +12,7 @@ Notable changes to Pleronic are documented here.
 - Added visual styling for inline tags and tags in YAML frontmatter.
 - Added whole-vault Markdown search with progress and matching-line snippets.
 - Added a per-vault list of the five most recently viewed notes.
+- Added a searchable destination-folder picker for captured notes.
 - Added offline draft saving and a queue for notes waiting to sync.
 - Added documentation for setup, GitHub Pages deployment, privacy, and limitations.
 
@@ -19,6 +20,7 @@ Notable changes to Pleronic are documented here.
 
 - Reworked the capture experience as a mobile-friendly installable PWA.
 - Notes use the supplied title as the Markdown filename; existing notes are not silently overwritten.
+- The Settings default note folder now acts as the default destination, with per-note folder selection available during capture.
 - Updated the interface with a cool green-and-blue forest palette.
 
 ## Changelog format

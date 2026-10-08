@@ -110,6 +110,19 @@
       .markdown th, .markdown td { padding: 6px 9px; border: 1px solid var(--line); text-align: left; }
       .editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 17px; }
       .save-hint { color: var(--muted); font-size: 11px; line-height: 1.5; }
+      .save-control { position: relative; display: grid; justify-items: end; gap: 6px; }
+      .save-actions { display: flex; }
+      .save-actions .button { border-radius: 8px 0 0 8px; }
+      .save-actions .save-folder-toggle { min-width: 42px; padding: 9px 11px; border-left-color: rgb(255 255 255 / 28%); border-radius: 0 8px 8px 0; }
+      .save-folder-label { max-width: min(320px, 75vw); overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+      .save-folder-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 4; width: min(320px, calc(100vw - 56px)); padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); box-shadow: var(--shadow); }
+      .save-folder-menu[hidden] { display: none; }
+      .save-folder-menu label { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 650; }
+      .save-folder-search { min-height: 38px; margin-bottom: 8px; font-size: 12px; }
+      .save-folder-options { display: grid; max-height: 220px; overflow-y: auto; gap: 3px; }
+      .save-folder-option { padding: 8px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font-size: 12px; text-align: left; overflow-wrap: anywhere; }
+      .save-folder-option:hover, .save-folder-option[aria-selected="true"] { background: var(--green-wash); color: var(--green-dark); }
+      .save-folder-status, .save-folder-empty { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
       .button { min-height: 42px; padding: 10px 16px; border: 1px solid transparent; border-radius: 8px; background: linear-gradient(125deg, var(--green), #3e6c79); color: #f7fbf9; font-size: 12px; font-weight: 700; }
       .button:hover { background: var(--green-dark); }
       .button:disabled { cursor: wait; opacity: .6; }
@@ -174,6 +187,8 @@
         .mobile-nav .nav-icon { font-size: 17px; }
         .mobile-nav .queue-count { position: absolute; margin: -27px 0 0 29px; }
         .queue-banner { align-items: flex-start; }
+        .editor-footer { align-items: flex-start; flex-wrap: wrap; }
+        .save-control { margin-left: auto; }
         .inbox-toolbar { flex-wrap: wrap; }
         .inbox-toolbar input { flex: 1 1 100%; }
         .vault-search-row { flex-wrap: wrap; }
@@ -245,7 +260,19 @@
             <div id="note-preview" class="markdown" role="tabpanel" aria-label="Markdown preview"></div>
             <div class="editor-footer">
               <span class="save-hint" id="draft-status" aria-live="polite">Saved as a draft on this device</span>
-              <button class="button" id="save-note" type="submit">Save to vault <span aria-hidden="true">↗</span></button>
+              <div class="save-control">
+                <div class="save-actions">
+                  <button class="button" id="save-note" type="submit">Save to vault <span aria-hidden="true">↗</span></button>
+                  <button class="button save-folder-toggle" id="save-folder-toggle" type="button" aria-label="Choose note destination folder" aria-expanded="false" aria-controls="save-folder-menu">▾</button>
+                </div>
+                <span class="save-folder-label" id="save-folder-label">Saving to inbox</span>
+                <div class="save-folder-menu" id="save-folder-menu" hidden>
+                  <label for="save-folder-search">Choose a destination folder</label>
+                  <input class="save-folder-search" id="save-folder-search" type="search" placeholder="Search folders…" autocomplete="off">
+                  <div class="save-folder-options" id="save-folder-options" role="listbox" aria-label="Vault folders"></div>
+                  <p class="save-folder-status" id="save-folder-status" role="status" aria-live="polite"></p>
+                </div>
+              </div>
             </div>
           </form>
         </section>
@@ -298,8 +325,9 @@
                 <input id="gh-branch" name="branch" type="text" placeholder="main" value="main" autocomplete="off" required>
               </div>
               <div class="settings-field">
-                <label class="field-label" for="gh-folder">Inbox folder</label>
+                <label class="field-label" for="gh-folder">Default note folder</label>
                 <input id="gh-folder" name="folder" type="text" placeholder="inbox" value="inbox" autocomplete="off">
+                <p class="field-hint">New notes go here unless you choose another folder. If it does not exist yet, GitHub creates it when the first note is saved.</p>
               </div>
               <div class="settings-field full">
                 <label class="field-label" for="gh-token">Fine-grained personal access token</label>

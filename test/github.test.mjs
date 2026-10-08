@@ -96,7 +96,7 @@ test('default fetch is invoked with the browser global as its receiver', async (
   }
 });
 
-test('createNote writes UTF-8 content to the configured branch and nested folder', async () => {
+test('createNote writes UTF-8 content to the configured branch and creates the destination path', async () => {
   let request;
   const client = new GitHubClient(config, async (url, options) => {
     request = { url, options };
@@ -180,6 +180,28 @@ test('listMarkdownPaths requests the recursive branch tree and returns Markdown 
   assert.deepEqual(await client.listMarkdownPaths(), ['Home.md', 'Journal/Today.MD']);
   assert.match(requestedUrls[0], /\/branches\/main$/);
   assert.match(requestedUrls[1], /\/git\/trees\/tree-sha\?recursive=1$/);
+});
+
+test('listVaultIndex returns Markdown paths and directories, including folders with only attachments', async () => {
+  const client = new GitHubClient(config, async (url) => {
+    if (url.endsWith('/branches/main')) {
+      return response(200, { commit: { commit: { tree: { sha: 'tree-sha' } } } });
+    }
+    return response(200, {
+      truncated: false,
+      tree: [
+        { type: 'tree', path: 'Projects' },
+        { type: 'tree', path: 'Projects/Forest' },
+        { type: 'blob', path: 'Projects/Forest/map.png' },
+        { type: 'blob', path: 'Projects/Forest/Notes.md' }
+      ]
+    });
+  });
+
+  assert.deepEqual(await client.listVaultIndex(), {
+    markdownPaths: ['Projects/Forest/Notes.md'],
+    directories: ['', 'Projects', 'Projects/Forest']
+  });
 });
 
 test('listMarkdownPaths reports truncated GitHub trees instead of returning incomplete links', async () => {

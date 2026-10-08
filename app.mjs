@@ -28,6 +28,12 @@ const elements = {
   content: $('#note-content'),
   form: $('#capture-form'),
   saveButton: $('#save-note'),
+  saveFolderToggle: $('#save-folder-toggle'),
+  saveFolderMenu: $('#save-folder-menu'),
+  saveFolderSearch: $('#save-folder-search'),
+  saveFolderOptions: $('#save-folder-options'),
+  saveFolderStatus: $('#save-folder-status'),
+  saveFolderLabel: $('#save-folder-label'),
   draftStatus: $('#draft-status'),
   preview: $('#note-preview'),
   writeTab: $('#write-tab'),
@@ -62,6 +68,12 @@ let config = loadConfig();
 let directoryEntries = [];
 let currentDirectory = '';
 let readerParentPath = '';
+let selectedSaveFolder = config ? config.folder : 'inbox';
+let vaultDirectories = null;
+let vaultDirectoriesKey = '';
+let vaultIndexPromise = null;
+let vaultIndexPromiseKey = '';
+let vaultIndexGeneration = 0;
 let recentNotes = [];
 let vaultSearchResults = null;
 let vaultSearchRun = 0;
@@ -146,6 +158,10 @@ function resetVaultNavigation() {
   currentDirectory = '';
   directoryEntries = [];
   invalidateMarkdownPathIndex();
+  selectedSaveFolder = config ? config.folder : 'inbox';
+  updateSaveFolderLabel();
+  elements.saveFolderMenu.hidden = true;
+  elements.saveFolderToggle.setAttribute('aria-expanded', 'false');
   clearVaultSearch();
   void refreshRecentNotes();
 }
@@ -543,16 +559,124 @@ function vaultIndexKey() {
 }
 
 function invalidateMarkdownPathIndex() {
+  vaultIndexGeneration += 1;
   markdownPathIndex = null;
   markdownPathIndexKey = '';
+  vaultDirectories = null;
+  vaultDirectoriesKey = '';
+  vaultIndexPromise = null;
+  vaultIndexPromiseKey = '';
+}
+
+async function getVaultIndex() {
+  const key = vaultIndexKey();
+  const generation = vaultIndexGeneration;
+  if (markdownPathIndex && key === markdownPathIndexKey && vaultDirectories && key === vaultDirectoriesKey) {
+    return { markdownPaths: markdownPathIndex, directories: vaultDirectories };
+  }
+  if (vaultIndexPromise && key === vaultIndexPromiseKey) return vaultIndexPromise;
+
+  const request = clientFromConfig().listVaultIndex();
+  vaultIndexPromise = request;
+  vaultIndexPromiseKey = key;
+  try {
+    const index = await request;
+    if (generation !== vaultIndexGeneration || key !== vaultIndexKey()) return getVaultIndex();
+    markdownPathIndex = index.markdownPaths;
+    markdownPathIndexKey = key;
+    vaultDirectories = index.directories;
+    vaultDirectoriesKey = key;
+    return index;
+  } finally {
+    if (vaultIndexPromise === request) {
+      vaultIndexPromise = null;
+      vaultIndexPromiseKey = '';
+    }
+  }
 }
 
 async function getMarkdownPaths() {
-  const key = vaultIndexKey();
-  if (markdownPathIndex && key === markdownPathIndexKey) return markdownPathIndex;
-  markdownPathIndex = await clientFromConfig().listMarkdownPaths();
-  markdownPathIndexKey = key;
-  return markdownPathIndex;
+  return (await getVaultIndex()).markdownPaths;
+}
+
+function saveFolderDisplay(path) {
+  return path || 'Vault root';
+}
+
+function saveFolderChoices(directories = []) {
+  const choices = new Set(['', ...directories, selectedSaveFolder]);
+  const defaultFolder = config ? config.folder : 'inbox';
+  let parent = '';
+  for (const part of defaultFolder.split('/').filter(Boolean)) {
+    parent = parent ? `${parent}/${part}` : part;
+    choices.add(parent);
+  }
+  return [...choices].sort((left, right) => {
+    if (!left) return -1;
+    if (!right) return 1;
+    return left.localeCompare(right, undefined, { sensitivity: 'base' });
+  });
+}
+
+function updateSaveFolderLabel() {
+  elements.saveFolderLabel.textContent = `Saving to ${saveFolderDisplay(selectedSaveFolder)}`;
+}
+
+function renderSaveFolderOptions() {
+  const query = elements.saveFolderSearch.value.trim().toLocaleLowerCase();
+  const choices = saveFolderChoices(vaultDirectories || [])
+    .filter((path) => path.toLocaleLowerCase().includes(query));
+  elements.saveFolderOptions.replaceChildren();
+
+  if (choices.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'save-folder-empty';
+    empty.textContent = 'No folders match that search.';
+    elements.saveFolderOptions.append(empty);
+    return;
+  }
+  for (const path of choices) {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'save-folder-option';
+    option.setAttribute('role', 'option');
+    option.setAttribute('aria-selected', String(path === selectedSaveFolder));
+    option.dataset.saveFolder = path;
+    option.textContent = saveFolderDisplay(path);
+    elements.saveFolderOptions.append(option);
+  }
+}
+
+async function openSaveFolderMenu() {
+  const opening = elements.saveFolderMenu.hidden;
+  elements.saveFolderMenu.hidden = !opening;
+  elements.saveFolderToggle.setAttribute('aria-expanded', String(opening));
+  if (!opening) return;
+
+  elements.saveFolderSearch.value = '';
+  renderSaveFolderOptions();
+  if (!config) {
+    elements.saveFolderStatus.textContent = `Connect a vault to load its folders. Your selected destination, ${saveFolderDisplay(selectedSaveFolder)}, will be used when you save.`;
+    elements.saveFolderSearch.focus();
+    return;
+  }
+
+  const selectedConfigKey = vaultIndexKey();
+  elements.saveFolderStatus.textContent = 'Loading vault folders…';
+  elements.saveFolderSearch.focus();
+  try {
+    const index = await getVaultIndex();
+    if (elements.saveFolderMenu.hidden || selectedConfigKey !== vaultIndexKey()) return;
+    vaultDirectories = index.directories;
+    vaultDirectoriesKey = selectedConfigKey;
+    elements.saveFolderStatus.textContent = 'Choose a folder. The configured default is available even if it does not exist yet.';
+    renderSaveFolderOptions();
+  } catch (error) {
+    if (elements.saveFolderMenu.hidden || selectedConfigKey !== vaultIndexKey()) return;
+    console.error('Could not load folders for note destination:', error);
+    elements.saveFolderStatus.textContent = `Could not load vault folders: ${error.message}. Your current destination remains available.`;
+    renderSaveFolderOptions();
+  }
 }
 
 async function storeDraft() {
@@ -589,14 +713,16 @@ async function saveNote(event) {
     title,
     content: elements.content.value.trim(),
     createdAt: new Date().toISOString(),
+    folder: selectedSaveFolder,
     destination: config ? {
       owner: config.owner,
       repo: config.repo,
       branch: config.branch,
-      folder: config.folder
+      folder: selectedSaveFolder
     } : null
   };
   elements.saveButton.disabled = true;
+  elements.saveFolderToggle.disabled = true;
   elements.saveButton.textContent = 'Saving…';
   try {
     if (!navigator.onLine || !config) {
@@ -643,13 +769,14 @@ async function saveNote(event) {
     }
   } finally {
     elements.saveButton.disabled = false;
+    elements.saveFolderToggle.disabled = false;
     elements.saveButton.innerHTML = 'Save to vault <span aria-hidden="true">↗</span>';
   }
 }
 
 function repositoryPath(note, destination = note.destination || config) {
   if (!destination) return `${note.relativePath}`;
-  return [destination.folder, note.relativePath].filter(Boolean).join('/');
+  return [note.folder ?? destination.folder, note.relativePath].filter(Boolean).join('/');
 }
 
 async function enqueueNote(note) {
@@ -816,6 +943,7 @@ function populateSettingsForm() {
   elements.branch.value = config?.branch || 'main';
   elements.folder.value = config?.folder ?? 'inbox';
   elements.token.value = config?.token || '';
+  updateSaveFolderLabel();
   updateVaultCard();
 }
 
@@ -913,6 +1041,31 @@ elements.readerBack.addEventListener('click', () => {
   switchView('inbox');
 });
 elements.form.addEventListener('submit', saveNote);
+elements.saveFolderToggle.addEventListener('click', openSaveFolderMenu);
+elements.saveFolderSearch.addEventListener('input', renderSaveFolderOptions);
+elements.saveFolderOptions.addEventListener('click', (event) => {
+  const option = event.target.closest('[data-save-folder]');
+  if (!option) return;
+  selectedSaveFolder = option.dataset.saveFolder;
+  updateSaveFolderLabel();
+  renderSaveFolderOptions();
+  elements.saveFolderMenu.hidden = true;
+  elements.saveFolderToggle.setAttribute('aria-expanded', 'false');
+  elements.saveFolderToggle.focus();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!elements.saveFolderMenu.hidden && !event.target.closest('.save-control')) {
+    elements.saveFolderMenu.hidden = true;
+    elements.saveFolderToggle.setAttribute('aria-expanded', 'false');
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.saveFolderMenu.hidden) {
+    elements.saveFolderMenu.hidden = true;
+    elements.saveFolderToggle.setAttribute('aria-expanded', 'false');
+    elements.saveFolderToggle.focus();
+  }
+});
 elements.vaultSearchForm.addEventListener('submit', searchVault);
 $('#settings-form').addEventListener('submit', saveSettings);
 $('#test-connection').addEventListener('click', testConnection);

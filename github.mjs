@@ -134,7 +134,7 @@ export class GitHubClient {
       });
   }
 
-  async listMarkdownPaths() {
+  async listVaultIndex() {
     const branch = encodeURIComponent(this.config.branch);
     const ref = new URLSearchParams({ recursive: '1' }).toString();
     const branchInfo = await this.request(`${this.repositoryPath}/branches/${branch}`);
@@ -147,11 +147,29 @@ export class GitHubClient {
       throw new Error('GitHub returned an invalid vault file index.');
     }
     if (tree.truncated) {
-      throw new Error('This vault is too large for GitHub’s complete file index. Folder navigation still works, but wiki links may not resolve.');
+      throw new Error('This vault is too large for GitHub’s complete file index. Folder browsing still works, but search, wiki links, and the destination folder list may be incomplete.');
     }
-    return tree.tree
-      .filter((entry) => entry.type === 'blob' && typeof entry.path === 'string' && /\.md$/i.test(entry.path))
-      .map((entry) => entry.path);
+    const markdownPaths = [];
+    const directories = new Set(['']);
+    for (const entry of tree.tree) {
+      if (typeof entry.path !== 'string') continue;
+      if (entry.type === 'blob' && /\.md$/i.test(entry.path)) markdownPaths.push(entry.path);
+      let parent = '';
+      const parts = entry.path.split('/');
+      for (const part of entry.type === 'tree' ? parts : parts.slice(0, -1)) {
+        parent = parent ? `${parent}/${part}` : part;
+        directories.add(parent);
+      }
+      if (entry.type === 'tree') directories.add(entry.path);
+    }
+    return {
+      markdownPaths,
+      directories: [...directories].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
+    };
+  }
+
+  async listMarkdownPaths() {
+    return (await this.listVaultIndex()).markdownPaths;
   }
 
   async readNote(path) {

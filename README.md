@@ -17,7 +17,8 @@ Pleronic is a static progressive web app (PWA) for sending Markdown notes to a G
 
 ## What you can do
 
-- **Capture notes** with a title and Markdown body. Notes are saved as `<title>.md` in your configured inbox folder.
+- **Capture notes** with a title and Markdown body. Notes are saved as `<title>.md` in your configured default folder.
+- **Choose a destination folder** from the searchable folder picker beside the save button. The Settings folder is the default, not a restriction; a missing destination folder is created when GitHub saves the first note there.
 - **Keep writing offline.** Drafts are saved on the device, and notes waiting for a connection are queued for sync.
 - **Browse the vault** by folder, with breadcrumbs and a quick filter for the current folder.
 - **Search the whole vault** by note title or Markdown content, with matching-line snippets and progress.
@@ -66,7 +67,7 @@ Pleronic uses a GitHub fine-grained personal access token to read and write Mark
    - **GitHub owner** — your username or organization
    - **Repository** — the repository name only, not its URL
    - **Branch** — the branch containing the vault (usually `main`)
-   - **Inbox folder** — the folder for new captured notes (defaults to `inbox`; leave blank for the repository root)
+   - **Default note folder** — where new notes go unless you choose another folder (defaults to `inbox`; leave blank for the repository root)
    - **Token** — the fine-grained personal access token
 4. Select **Test connection**, then save the settings.
 5. Open **Vault** to browse, read, and search your notes.
@@ -78,6 +79,8 @@ The token must be able to read vault files for browsing, wiki links, and search,
 ### Capture
 
 Give your note a title, write in Markdown, and select **Save to vault**. The title becomes the filename, with characters that cannot be used safely in filenames replaced by hyphens. Use a unique title within the destination folder; Pleronic does not silently overwrite an existing note.
+
+The folder shown below the save button is the current destination. Open the adjacent arrow to search and select any folder in the vault, or choose **Vault root**. The Settings default is included even if it has not been created yet; GitHub creates that folder when the note is saved.
 
 If GitHub is unavailable, Pleronic can save the note to a local sync queue and try again when you reconnect. Review the sync status and use **Sync now** if needed.
 
