@@ -65,6 +65,22 @@ test('connection test requests the configured repository branch with the token',
   assert.equal(request.options.headers.Accept, 'application/vnd.github+json');
 });
 
+test('default fetch is invoked with the browser global as its receiver', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchReceiver;
+  globalThis.fetch = function (url, options) {
+    fetchReceiver = this;
+    return Promise.resolve(response(200, { name: 'main' }));
+  };
+  try {
+    const client = new GitHubClient(config);
+    await client.testConnection();
+    assert.equal(fetchReceiver, globalThis);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('createNote writes UTF-8 content to the configured branch and nested folder', async () => {
   let request;
   const client = new GitHubClient(config, async (url, options) => {
@@ -92,23 +108,23 @@ test('listNotes uses the configured branch and only returns Markdown files', asy
     ]);
   });
 
-  test('a missing inbox folder is empty when the configured branch exists', async () => {
-    const requestedUrls = [];
-    const client = new GitHubClient(config, async (url) => {
-      requestedUrls.push(url);
-      return requestedUrls.length === 1
-        ? response(404, { message: 'Not Found' }, 'Not Found')
-        : response(200, { name: 'main' });
-    });
-
-    assert.deepEqual(await client.listNotes(), []);
-    assert.equal(requestedUrls.length, 2);
-    assert.match(requestedUrls[1], /\/branches\/main$/);
-  });
-
   const notes = await client.listNotes();
   assert.match(requestedUrl, /\/contents\/notes\/inbox\?ref=main$/);
   assert.deepEqual(notes.map((note) => note.name), ['thought.md']);
+});
+
+test('a missing inbox folder is empty when the configured branch exists', async () => {
+  const requestedUrls = [];
+  const client = new GitHubClient(config, async (url) => {
+    requestedUrls.push(url);
+    return requestedUrls.length === 1
+      ? response(404, { message: 'Not Found' }, 'Not Found')
+      : response(200, { name: 'main' });
+  });
+
+  assert.deepEqual(await client.listNotes(), []);
+  assert.equal(requestedUrls.length, 2);
+  assert.match(requestedUrls[1], /\/branches\/main$/);
 });
 
 test('GitHub API errors preserve status and actionable message', async () => {

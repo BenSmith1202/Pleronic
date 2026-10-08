@@ -52,7 +52,7 @@ export function decodeUtf8Base64(base64) {
 export class GitHubClient {
   constructor(config, fetchImpl = globalThis.fetch) {
     this.config = validateConfig(config);
-    this.fetch = fetchImpl;
+    this.fetch = fetchImpl.bind(globalThis);
     this.repositoryPath = `/repos/${encodeURIComponent(this.config.owner)}/${encodeURIComponent(this.config.repo)}`;
   }
 
