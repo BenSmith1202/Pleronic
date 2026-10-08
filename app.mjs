@@ -27,6 +27,7 @@ const elements = {
   form: $('#capture-form'),
   saveButton: $('#save-note'),
   saveCaptureDraftButton: $('#save-capture-draft'),
+  discardCaptureButton: $('#discard-capture'),
   saveFolderToggle: $('#save-folder-toggle'),
   saveFolderMenu: $('#save-folder-menu'),
   saveFolderSearch: $('#save-folder-search'),
@@ -176,6 +177,12 @@ function updateOnlineControls() {
   elements.vaultSearchButton.title = offline ? 'Connect to the internet to search the vault.' : !config ? 'Connect a GitHub vault to search.' : '';
   elements.refreshInboxButton.title = offline ? 'Connect to the internet to refresh the vault.' : !config ? 'Connect a GitHub vault to browse.' : '';
   $('#test-connection').title = offline ? 'Connect to the internet to test GitHub credentials.' : '';
+}
+
+function updateCaptureControls() {
+  elements.discardCaptureButton.hidden = !activeCaptureDraftId
+    && !elements.title.value.trim()
+    && !elements.content.value.trim();
 }
 
 function isGitHubReady() {
@@ -1192,6 +1199,7 @@ async function saveCaptureDraft() {
     elements.title.value = '';
     elements.content.value = '';
     clearTimeout(draftTimer);
+    updateCaptureControls();
     await refreshDraftCount();
     elements.draftStatus.textContent = 'Saved as a draft on this device';
     updatePreview('', elements.preview);
@@ -1204,6 +1212,35 @@ async function saveCaptureDraft() {
   } finally {
     elements.saveCaptureDraftButton.disabled = false;
   }
+}
+
+async function discardCapture() {
+  if (!activeCaptureDraftId && !elements.title.value.trim() && !elements.content.value.trim()) return;
+  if (!confirm('Discard this note and delete its saved draft, if any? This cannot be undone.')) return;
+
+  clearTimeout(draftTimer);
+  try {
+    await del(DRAFT_KEY);
+    if (activeCaptureDraftId) await del(`${CAPTURE_DRAFT_PREFIX}${activeCaptureDraftId}`);
+    activeCaptureDraftId = null;
+    elements.title.value = '';
+    elements.content.value = '';
+    updatePreview('', elements.preview);
+    elements.draftStatus.textContent = 'Draft discarded';
+    updateCaptureControls();
+  } catch (error) {
+    console.error('Could not discard the capture draft:', error);
+    showToast(`Could not discard the draft: ${error.message}`);
+    return;
+  }
+  try {
+    await refreshDraftCount();
+  } catch (error) {
+    console.error('Draft was discarded, but the draft count could not be refreshed:', error);
+    showToast(`Draft discarded, but the draft count could not be refreshed: ${error.message}`);
+    return;
+  }
+  showToast('Draft discarded.');
 }
 
 async function openCaptureDraft(id) {
@@ -1222,6 +1259,7 @@ async function openCaptureDraft(id) {
     ? `Draft saved ${new Date(draft.updatedAt).toLocaleString()}`
     : 'Saved as a draft on this device';
   updatePreview(elements.content.value, elements.preview);
+  updateCaptureControls();
   await switchView('capture');
 }
 
@@ -1336,6 +1374,7 @@ function clearEditor() {
   activeCaptureDraftId = null;
   elements.title.value = '';
   elements.content.value = '';
+  updateCaptureControls();
   updatePreview('', elements.preview);
   void storeDraft();
 }
@@ -1919,6 +1958,7 @@ async function initialize() {
       elements.content.value = typeof draft.content === 'string' ? draft.content : '';
       if (draft.updatedAt) elements.draftStatus.textContent = `Draft saved ${new Date(draft.updatedAt).toLocaleString()}`;
     }
+    updateCaptureControls();
     await refreshDraftCount();
   } catch (error) {
     console.error('Could not restore local notes:', error);
@@ -1975,6 +2015,7 @@ elements.copyLocalDraftButton.addEventListener('click', async () => {
 });
 elements.form.addEventListener('submit', (event) => runUiAction('Could not save the note.', () => saveNote(event)));
 elements.saveCaptureDraftButton.addEventListener('click', () => runUiAction('Could not save the draft.', saveCaptureDraft));
+elements.discardCaptureButton.addEventListener('click', () => runUiAction('Could not discard the draft.', discardCapture));
 elements.saveFolderToggle.addEventListener('click', () => runUiAction('Could not open the folder picker.', openSaveFolderMenu));
 elements.saveFolderSearch.addEventListener('input', renderSaveFolderOptions);
 elements.saveFolderOptions.addEventListener('click', (event) => {
@@ -2097,6 +2138,7 @@ elements.previewTab.addEventListener('click', () => {
 
 for (const field of [elements.title, elements.content]) {
   field.addEventListener('input', () => {
+    updateCaptureControls();
     clearTimeout(draftTimer);
     draftTimer = setTimeout(storeDraft, 350);
   });
