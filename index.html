@@ -372,11 +372,12 @@
           <p class="edit-status" id="edit-status" role="status" aria-live="polite"></p>
           <section class="edit-conflict" id="edit-conflict" aria-labelledby="edit-conflict-title" hidden>
             <strong id="edit-conflict-title">The note changed on GitHub.</strong>
-            <p>A newer remote version is shown below. Your local draft is preserved. Compare both versions, reconcile the text in the editor, then confirm to use the latest version as the save baseline.</p>
+            <p>A newer remote version is shown below. Choose whether to keep your local draft or replace it with GitHub’s version.</p>
             <pre id="remote-note-content"></pre>
             <div class="button-row">
               <button class="button secondary" id="copy-local-draft" type="button">Copy my draft</button>
-              <button class="button" id="accept-remote-version" type="button">I’ve reconciled; continue</button>
+              <button class="button secondary" id="use-remote-version" type="button">Use remote version</button>
+              <button class="button" id="accept-remote-version" type="button">Keep my draft</button>
             </div>
           </section>
           <div class="note-editor" id="note-editor">

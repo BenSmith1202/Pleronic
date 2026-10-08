@@ -196,13 +196,22 @@ function editDraftKey(path, identity = vaultIdentity()) {
 function updateEditControls() {
   const canEdit = Boolean(currentNote?.sha && currentNote.identity === vaultIdentity());
   elements.readerActions.hidden = !currentNote;
-  elements.editButton.hidden = !canEdit || currentNote.editing;
+  elements.editButton.hidden = !canEdit || currentNote.editing || Boolean(currentNote.conflict);
+  elements.editButton.textContent = currentNote?.draftContent !== null && currentNote?.draftContent !== undefined
+    ? 'Continue draft'
+    : 'Edit note';
   elements.cancelEditButton.hidden = !currentNote?.editing;
   elements.saveEditButton.hidden = !currentNote?.editing;
   elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict);
   elements.noteEditor.classList.toggle('active', Boolean(currentNote?.editing));
   elements.readerContent.hidden = Boolean(currentNote?.editing);
   elements.editConflict.hidden = !currentNote?.conflict;
+  if (currentNote) {
+    const draftIsUnsynced = currentNote.draftContent !== null
+      && currentNote.draftContent !== undefined
+      && currentNote.draftContent !== currentNote.content;
+    elements.readerMeta.textContent = `${currentNote.path}${draftIsUnsynced ? ' · Local draft' : ''}${currentNote.offline ? ' · Offline copy' : ''}`;
+  }
 }
 
 async function persistEditDraft() {
@@ -214,7 +223,9 @@ async function persistEditDraft() {
   };
   try {
     await set(editDraftKey(currentNote.path, currentNote.identity), draft);
-    elements.editStatus.textContent = 'Draft saved on this device. It has not been sent to GitHub.';
+    currentNote.draftContent = draft.content;
+    elements.editStatus.textContent = 'Local draft saved on this device. It has not been sent to GitHub.';
+    updateEditControls();
     return true;
   } catch (error) {
     console.error('Could not save the local edit draft:', error);
@@ -331,8 +342,7 @@ function safeUrl(value, image) {
 }
 
 async function switchView(view, draftAlreadySaved = false) {
-  if (!draftAlreadySaved && view !== currentView && currentNote?.editing && elements.editContent.value !== currentNote.content) {
-    if (!confirm('Keep your changes as a local draft on this device and leave the editor?')) return false;
+  if (!draftAlreadySaved && view !== currentView && currentNote?.editing && elements.editContent.value !== currentNote.draftContent) {
     clearTimeout(editDraftTimer);
     if (!await persistEditDraft()) return false;
   }
@@ -572,7 +582,7 @@ async function fetchInbox() {
     return;
   }
 
-  elements.inboxDescription.textContent = `${config.owner}/${config.repo} · read-only`;
+  elements.inboxDescription.textContent = `${config.owner}/${config.repo} · browse and edit`;
   elements.noteList.replaceChildren();
   const loading = document.createElement('div');
   loading.className = 'empty-state';
@@ -922,8 +932,7 @@ async function syncQueuedNote(note, destination) {
 }
 
 async function openNote(note, heading = null) {
-  if (currentNote?.editing && elements.editContent.value !== currentNote.content) {
-    if (!confirm('Keep your changes as a local draft on this device and open this note?')) return;
+  if (currentNote?.editing && elements.editContent.value !== currentNote.draftContent) {
     clearTimeout(editDraftTimer);
     if (!await persistEditDraft()) return;
   }
@@ -945,8 +954,10 @@ async function openNote(note, heading = null) {
     path: note.path,
     name: formatNoteTitle(note.name),
     content: '',
+    draftContent: null,
     sha: null,
     identity: vaultIdentity(),
+    offline: false,
     editing: false,
     conflict: null
   };
@@ -969,6 +980,7 @@ async function openNote(note, heading = null) {
     try {
       const draft = await get(editDraftKey(note.path, currentNote.identity));
       if (draft && typeof draft.content === 'string' && typeof draft.baseSha === 'string') {
+        currentNote.draftContent = draft.content;
         elements.editContent.value = draft.content;
         if (draft.baseSha !== remote.sha) {
           currentNote.sha = draft.baseSha;
@@ -976,7 +988,10 @@ async function openNote(note, heading = null) {
           await showEditConflict(remote);
         }
         else if (draft.content !== remote.content) elements.editStatus.textContent = `Local draft restored · ${new Date(draft.updatedAt).toLocaleString()}`;
-        else await del(editDraftKey(note.path, currentNote.identity));
+        else {
+          await del(editDraftKey(note.path, currentNote.identity));
+          currentNote.draftContent = null;
+        }
       }
     } catch (draftError) {
       console.error('Could not restore the local edit draft:', draftError);
@@ -989,6 +1004,7 @@ async function openNote(note, heading = null) {
       const cached = await get(cacheKey);
       if (typeof cached === 'string') {
         currentNote.content = cached;
+        currentNote.offline = true;
         await renderVaultNote(cached, note.path);
         void recordRecentNote(note);
         elements.readerMeta.textContent = `${note.path} · Offline copy`;
@@ -1015,6 +1031,7 @@ function startEditingNote() {
     showToast('Reconnect to the same vault before editing this note.');
     return;
   }
+  elements.editContent.value = currentNote.draftContent ?? currentNote.content;
   currentNote.editing = true;
   elements.editStatus.textContent = 'Changes are kept as a local draft until you save to GitHub.';
   updateEditControls();
@@ -1046,6 +1063,7 @@ async function cancelEditingNote() {
   }
   currentNote.editing = false;
   currentNote.conflict = null;
+  currentNote.draftContent = null;
   elements.editContent.value = currentNote.content;
   elements.editStatus.textContent = '';
   updateEditControls();
@@ -1102,6 +1120,7 @@ async function saveEditedNote() {
   }
 
   currentNote.content = elements.editContent.value;
+  currentNote.draftContent = null;
   currentNote.sha = result.sha;
   currentNote.editing = false;
   currentNote.conflict = null;
@@ -1131,16 +1150,40 @@ async function saveEditedNote() {
 async function acceptRemoteVersion() {
   if (!currentNote?.conflict) return;
   const remote = currentNote.conflict;
+  const previousSha = currentNote.sha;
   currentNote.sha = remote.sha;
-  currentNote.content = remote.content;
   currentNote.conflict = null;
   if (!await persistEditDraft()) {
+    currentNote.sha = previousSha;
     currentNote.conflict = remote;
     updateEditControls();
     return;
   }
-  elements.editStatus.textContent = 'Latest GitHub version accepted as the baseline. Your reconciled text is still a local draft.';
+  elements.editStatus.textContent = 'Keeping your draft. Saving it will replace the newer remote text; cancel if you want to use GitHub’s version instead.';
   updateEditControls();
+}
+
+async function useRemoteVersion() {
+  if (!currentNote?.conflict) return;
+  const remote = currentNote.conflict;
+  try {
+    await set(`note_cache:${currentNote.path}`, remote.content);
+    await del(editDraftKey(currentNote.path, currentNote.identity));
+  } catch (error) {
+    console.error('Could not replace the local draft with the remote note:', error);
+    showToast(`Could not update the local copy: ${error.message}`);
+    return;
+  }
+  currentNote.content = remote.content;
+  currentNote.sha = remote.sha;
+  currentNote.draftContent = null;
+  currentNote.conflict = null;
+  currentNote.editing = false;
+  currentNote.offline = false;
+  elements.editContent.value = remote.content;
+  elements.editStatus.textContent = '';
+  updateEditControls();
+  await renderVaultNote(remote.content, currentNote.path);
 }
 
 async function renderVaultNote(markdown, path) {
@@ -1293,6 +1336,7 @@ elements.cancelEditButton.addEventListener('click', () => void cancelEditingNote
 elements.saveEditButton.addEventListener('click', () => void saveEditedNote());
 elements.editContent.addEventListener('input', scheduleEditDraftSave);
 elements.acceptRemoteVersionButton.addEventListener('click', () => void acceptRemoteVersion());
+$('#use-remote-version').addEventListener('click', () => void useRemoteVersion());
 elements.copyLocalDraftButton.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(elements.editContent.value);
