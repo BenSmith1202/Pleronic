@@ -147,9 +147,7 @@
       .vault-search-status:empty { display: none; }
       .recent-notes { margin: 20px 0 24px; }
       .recent-note-list { display: grid; gap: 7px; }
-      .my-drafts { margin: -10px 0 24px; }
-      .my-drafts-list { display: grid; gap: 7px; margin-top: 10px; }
-      .my-drafts-list[hidden] { display: none; }
+      .my-drafts-list { display: grid; gap: 9px; }
       .recent-note-card { padding: 11px 13px; }
       .recent-when { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 10px; }
       .search-snippet { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.45; }
@@ -219,7 +217,7 @@
         .sidebar { display: none; }
         .workspace { padding: 20px 18px 34px; }
         .topbar { margin-bottom: 35px; }
-        .mobile-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 3; display: grid !important; grid-template-columns: repeat(3, 1fr); padding: 8px 9px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgb(249 252 251 / 96%); backdrop-filter: blur(12px); }
+        .mobile-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 3; display: grid !important; grid-template-columns: repeat(4, 1fr); padding: 8px 9px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgb(249 252 251 / 96%); backdrop-filter: blur(12px); }
         .mobile-nav .nav-button { flex-direction: column; justify-content: center; gap: 3px; padding: 5px; font-size: 10px; }
         .mobile-nav .nav-icon { font-size: 17px; }
         .mobile-nav .queue-count { position: absolute; margin: -27px 0 0 29px; }
@@ -254,6 +252,7 @@
         <nav class="nav-list" aria-label="Workspace">
           <button class="nav-button active" data-view="capture"><span class="nav-icon" aria-hidden="true">＋</span>Capture</button>
           <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Vault<span class="queue-count" id="queue-count" hidden>0</span></button>
+          <button class="nav-button" data-view="drafts"><span class="nav-icon" aria-hidden="true">✎</span>Drafts</button>
           <button class="nav-button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</button>
         </nav>
         <div class="sidebar-bottom">
@@ -333,10 +332,6 @@
               <p class="vault-search-help">Notes you open will appear here on this device.</p>
             </div>
           </section>
-          <section class="my-drafts" aria-label="Saved edit drafts">
-            <button class="button secondary" id="show-my-drafts" type="button" aria-expanded="false" aria-controls="my-drafts-list">My drafts</button>
-            <div class="my-drafts-list" id="my-drafts-list" hidden></div>
-          </section>
           <nav class="vault-breadcrumbs" id="vault-breadcrumbs" aria-label="Vault folder path"></nav>
           <p class="directory-heading" id="directory-heading">Vault root</p>
           <div class="inbox-toolbar">
@@ -345,6 +340,15 @@
             <button class="button secondary" id="refresh-inbox" type="button">Refresh folder</button>
           </div>
           <div class="note-list" id="note-list" aria-live="polite"></div>
+        </section>
+
+        <section class="view" id="view-drafts" aria-labelledby="drafts-heading">
+          <p class="eyebrow">Your work in progress</p>
+          <h1 id="drafts-heading">My drafts.</h1>
+          <p class="lead">Saved edits to existing notes stay on this device until you reopen and save them to GitHub.</p>
+          <div class="my-drafts-list" id="my-drafts-list" aria-live="polite">
+            <p class="vault-search-help">Loading your saved drafts…</p>
+          </div>
         </section>
 
         <section class="view" id="view-settings" aria-labelledby="settings-heading">
@@ -434,6 +438,7 @@
       <nav class="mobile-nav" aria-label="Main navigation">
         <button class="nav-button active" data-view="capture"><span class="nav-icon" aria-hidden="true">＋</span>Capture</button>
         <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Vault<span class="queue-count" id="mobile-queue-count" hidden>0</span></button>
+        <button class="nav-button" data-view="drafts"><span class="nav-icon" aria-hidden="true">✎</span>Drafts</button>
         <button class="nav-button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</button>
       </nav>
     </div>

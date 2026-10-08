@@ -48,7 +48,6 @@ const elements = {
   vaultSearchButton: $('#vault-search-button'),
   vaultSearchStatus: $('#vault-search-status'),
   recentNoteList: $('#recent-note-list'),
-  showMyDrafts: $('#show-my-drafts'),
   myDraftsList: $('#my-drafts-list'),
   saveEditDraftButton: $('#save-edit-draft-button'),
   readerTitle: $('#reader-title'),
@@ -479,8 +478,8 @@ async function switchView(view, draftAlreadyHandled = false) {
   });
   if (view === 'inbox') {
     fetchInbox();
-    if (!elements.myDraftsList.hidden) runUiAction('Could not refresh your drafts.', loadMyDrafts);
   }
+  if (view === 'drafts') runUiAction('Could not load your drafts.', loadMyDrafts);
   return true;
 }
 
@@ -588,8 +587,6 @@ async function loadMyDrafts() {
     empty.className = 'vault-search-help';
     empty.textContent = 'Connect a vault to see its saved edit drafts.';
     elements.myDraftsList.append(empty);
-    elements.myDraftsList.hidden = false;
-    elements.showMyDrafts.setAttribute('aria-expanded', 'true');
     return;
   }
 
@@ -634,8 +631,6 @@ async function loadMyDrafts() {
       elements.myDraftsList.append(button);
     }
   }
-  elements.myDraftsList.hidden = false;
-  elements.showMyDrafts.setAttribute('aria-expanded', 'true');
 }
 
 function renderInbox() {
@@ -1740,14 +1735,6 @@ elements.recentNoteList.addEventListener('click', (event) => {
   if (!button) return;
   const note = recentNotes.find((entry) => entry.path === button.dataset.notePath);
   if (note) runUiAction('Could not open that note.', () => openNote(note));
-});
-elements.showMyDrafts.addEventListener('click', () => {
-  if (!elements.myDraftsList.hidden) {
-    elements.myDraftsList.hidden = true;
-    elements.showMyDrafts.setAttribute('aria-expanded', 'false');
-    return;
-  }
-  runUiAction('Could not load your drafts.', loadMyDrafts);
 });
 elements.myDraftsList.addEventListener('click', (event) => {
   const button = event.target.closest('[data-draft-path]');
