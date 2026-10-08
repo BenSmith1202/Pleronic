@@ -1,11 +1,13 @@
 import { marked } from './vendor/marked.esm.js';
 import { del, get, set } from './vendor/idb-keyval.js';
 import { GitHubApiError, GitHubClient, noteFilename, validateConfig } from './github.mjs';
-import { headingSlug, resolveWikiLinks } from './obsidian.mjs';
+import { extractObsidianFrontmatter, headingSlug, resolveWikiLinks } from './obsidian.mjs';
 
 const CONFIG_KEY = 'obsidian_config';
 const QUEUE_KEY = 'sync_queue';
 const DRAFT_KEY = 'capture_draft';
+const RECENT_NOTES_KEY = 'recent_notes';
+const RECENT_NOTES_LIMIT = 5;
 const BLOCKED_TAGS = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'TEMPLATE', 'SVG', 'MATH']);
 const SAFE_TAGS = new Set([
   'A', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
@@ -35,8 +37,16 @@ const elements = {
   breadcrumbs: $('#vault-breadcrumbs'),
   directoryHeading: $('#directory-heading'),
   search: $('#inbox-search'),
+  vaultSearchForm: $('#vault-search-form'),
+  vaultSearchInput: $('#vault-search-input'),
+  vaultSearchButton: $('#vault-search-button'),
+  vaultSearchStatus: $('#vault-search-status'),
+  recentNoteList: $('#recent-note-list'),
   readerTitle: $('#reader-title'),
   readerMeta: $('#reader-meta'),
+  readerTags: $('#reader-tags'),
+  readerBack: $('#reader-back'),
+  readerBackLabel: $('#reader-back-label'),
   readerContent: $('#reader-content'),
   toast: $('#toast'),
   owner: $('#gh-owner'),
@@ -51,6 +61,10 @@ const elements = {
 let config = loadConfig();
 let directoryEntries = [];
 let currentDirectory = '';
+let readerParentPath = '';
+let recentNotes = [];
+let vaultSearchResults = null;
+let vaultSearchRun = 0;
 let markdownPathIndex = null;
 let markdownPathIndexKey = '';
 let currentView = 'capture';
@@ -128,6 +142,14 @@ function updateVaultCard() {
   elements.vaultBranch.textContent = config ? `${config.branch} · ${config.folder || 'repository root'}` : 'Connect a GitHub repository';
 }
 
+function resetVaultNavigation() {
+  currentDirectory = '';
+  directoryEntries = [];
+  invalidateMarkdownPathIndex();
+  clearVaultSearch();
+  void refreshRecentNotes();
+}
+
 function clientFromConfig(savedConfig = config) {
   if (!savedConfig) throw new Error('Connect a GitHub repository in Settings before syncing.');
   return new GitHubClient(savedConfig);
@@ -173,12 +195,43 @@ function updatePreview(markdown, target) {
 
   for (const child of parsed.body.childNodes) copySafeNode(child, fragment);
   target.replaceChildren(fragment);
+  styleInlineTags(target);
   const headingCounts = new Map();
   for (const heading of target.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
     const base = headingSlug(heading.textContent);
     const count = headingCounts.get(base) || 0;
     headingCounts.set(base, count + 1);
     heading.id = count ? `${base}-${count}` : base;
+  }
+}
+
+function styleInlineTags(target) {
+  const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+  const textNodes = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!node.parentElement?.closest('a, code, pre')) textNodes.push(node);
+  }
+
+  const tagPattern = /(^|\s)#([\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*)(?![\p{L}\p{N}_/-])/gu;
+  for (const node of textNodes) {
+    const text = node.textContent || '';
+    tagPattern.lastIndex = 0;
+    if (!tagPattern.test(text)) continue;
+    tagPattern.lastIndex = 0;
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
+    for (const match of text.matchAll(tagPattern)) {
+      const tagStart = match.index + match[1].length;
+      fragment.append(document.createTextNode(text.slice(lastIndex, tagStart)));
+      const tag = document.createElement('span');
+      tag.className = 'obsidian-tag';
+      tag.textContent = `#${match[2]}`;
+      fragment.append(tag);
+      lastIndex = tagStart + match[0].length - match[1].length;
+    }
+    fragment.append(document.createTextNode(text.slice(lastIndex)));
+    node.replaceWith(fragment);
   }
 }
 
@@ -209,18 +262,116 @@ function formatNoteTitle(name) {
   return name.replace(/\.md$/i, '').replace(/^\d{8}-\d{6}-(?:\d{3}-)?/, '').replace(/[-_]+/g, ' ');
 }
 
+function recentNotesStorageKey() {
+  if (!config) return null;
+  return `${RECENT_NOTES_KEY}:${config.owner}/${config.repo}@${config.branch}`;
+}
+
+function formatRecentTime(viewedAt) {
+  const timestamp = Date.parse(viewedAt);
+  if (!Number.isFinite(timestamp)) return '';
+  const elapsedSeconds = Math.max(0, (Date.now() - timestamp) / 1000);
+  if (elapsedSeconds < 60) return 'just now';
+  const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  if (elapsedSeconds < 3600) return relativeTime.format(-Math.floor(elapsedSeconds / 60), 'minute');
+  if (elapsedSeconds < 86_400) return relativeTime.format(-Math.floor(elapsedSeconds / 3600), 'hour');
+  return relativeTime.format(-Math.floor(elapsedSeconds / 86_400), 'day');
+}
+
+function renderRecentNotes() {
+  elements.recentNoteList.replaceChildren();
+  if (recentNotes.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'vault-search-help';
+    empty.textContent = config ? 'Notes you open will appear here on this device.' : 'Connect a vault to keep track of recently viewed notes.';
+    elements.recentNoteList.append(empty);
+    return;
+  }
+
+  for (const note of recentNotes.slice(0, RECENT_NOTES_LIMIT)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'note-card recent-note-card';
+    button.dataset.notePath = note.path;
+    const icon = document.createElement('span');
+    icon.className = 'note-file';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '▤';
+    const info = document.createElement('span');
+    info.className = 'note-info';
+    const title = document.createElement('span');
+    title.className = 'note-name';
+    title.textContent = formatNoteTitle(note.name);
+    const meta = document.createElement('span');
+    meta.className = 'note-meta';
+    meta.textContent = note.path;
+    info.append(title, meta);
+    const viewedAt = document.createElement('span');
+    viewedAt.className = 'recent-when';
+    viewedAt.textContent = formatRecentTime(note.viewedAt);
+    button.append(icon, info, viewedAt);
+    elements.recentNoteList.append(button);
+  }
+}
+
+async function recordRecentNote(note) {
+  const key = recentNotesStorageKey();
+  if (!key) return;
+  const viewed = {
+    name: note.name,
+    path: note.path,
+    viewedAt: new Date().toISOString()
+  };
+  recentNotes = [viewed, ...recentNotes.filter((entry) => entry.path !== note.path)].slice(0, RECENT_NOTES_LIMIT);
+  renderRecentNotes();
+  try {
+    await set(key, recentNotes);
+  } catch (error) {
+    console.error('Could not save recently viewed notes:', error);
+    showToast(`Note opened, but recent history could not be saved: ${error.message}`);
+  }
+}
+
+async function loadRecentNotes() {
+  const key = recentNotesStorageKey();
+  const storedNotes = key ? await get(key) ?? [] : [];
+  if (key !== recentNotesStorageKey()) return;
+  recentNotes = storedNotes;
+  if (!Array.isArray(recentNotes) || recentNotes.some((note) =>
+    !note || typeof note.name !== 'string' || typeof note.path !== 'string' || typeof note.viewedAt !== 'string'
+  )) {
+    throw new Error('The saved recently viewed notes are invalid.');
+  }
+  renderRecentNotes();
+}
+
+async function refreshRecentNotes() {
+  try {
+    await loadRecentNotes();
+  } catch (error) {
+    console.error('Could not load recently viewed notes:', error);
+    showToast(`Could not load recent notes: ${error.message}`);
+  }
+}
+
 function renderInbox() {
   const query = elements.search.value.trim().toLocaleLowerCase();
-  const entries = directoryEntries.filter((entry) => entry.name.toLocaleLowerCase().includes(query));
+  const entries = vaultSearchResults === null
+    ? directoryEntries.filter((entry) => entry.name.toLocaleLowerCase().includes(query))
+    : vaultSearchResults;
   elements.noteList.replaceChildren();
 
   if (entries.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('strong');
-    heading.textContent = query ? 'No folders or notes match that filter.' : 'This folder is empty.';
+    heading.textContent = vaultSearchResults !== null
+      ? 'No notes matched your search.'
+      : query ? 'No folders or notes match that filter.' : 'This folder is empty.';
     const detail = document.createElement('span');
-    detail.textContent = query ? 'Try another name.' : currentDirectory ? 'Try another folder or go back up a level.' : 'Capture a thought and it will land here.';
+    detail.textContent = vaultSearchResults !== null
+      ? 'Try another search term.'
+      : query ? 'Try another name.' : currentDirectory ? 'Try another folder or go back up a level.' : 'Capture a thought and it will land here.';
     empty.append(heading, detail);
     elements.noteList.append(empty);
     return;
@@ -247,6 +398,12 @@ function renderInbox() {
       ? `Folder · ${entry.path}`
       : entry.path;
     info.append(title, meta);
+    if (entry.snippet) {
+      const snippet = document.createElement('span');
+      snippet.className = 'search-snippet';
+      snippet.textContent = entry.snippet;
+      info.append(snippet);
+    }
     const kind = document.createElement('span');
     kind.className = 'note-kind';
     kind.textContent = entry.type === 'dir' ? 'FOLDER' : 'NOTE';
@@ -256,6 +413,63 @@ function renderInbox() {
     arrow.textContent = '→';
     button.append(icon, info, kind, arrow);
     elements.noteList.append(button);
+  }
+}
+
+function clearVaultSearch() {
+  vaultSearchRun += 1;
+  vaultSearchResults = null;
+  elements.vaultSearchInput.value = '';
+  elements.vaultSearchStatus.textContent = '';
+  elements.vaultSearchButton.disabled = false;
+}
+
+async function searchVault(event) {
+  event.preventDefault();
+  const query = elements.vaultSearchInput.value.trim();
+  if (!query) {
+    elements.vaultSearchStatus.textContent = 'Enter a word or phrase to search for.';
+    return;
+  }
+  if (!config) {
+    elements.vaultSearchStatus.textContent = 'Connect a GitHub repository in Settings before searching.';
+    return;
+  }
+
+  const run = ++vaultSearchRun;
+  vaultSearchResults = [];
+  elements.vaultSearchButton.disabled = true;
+  elements.directoryHeading.textContent = 'Vault search results';
+  elements.noteList.replaceChildren();
+  const loading = document.createElement('div');
+  loading.className = 'empty-state';
+  loading.textContent = 'Preparing a whole-vault search…';
+  elements.noteList.append(loading);
+  try {
+    const paths = await getMarkdownPaths();
+    if (run !== vaultSearchRun) return;
+    const matches = await clientFromConfig().searchNotes(query, paths, (completed, total) => {
+      if (run === vaultSearchRun) elements.vaultSearchStatus.textContent = `Searching ${completed} of ${total} Markdown notes…`;
+    });
+    if (run !== vaultSearchRun) return;
+    vaultSearchResults = matches.map((match) => ({
+      type: 'file',
+      name: match.path.split('/').at(-1),
+      path: match.path,
+      snippet: match.snippet
+    }));
+    elements.vaultSearchStatus.textContent = `Found ${matches.length} matching ${matches.length === 1 ? 'note' : 'notes'} across ${paths.length} Markdown files.`;
+    renderInbox();
+  } catch (error) {
+    if (run !== vaultSearchRun) return;
+    console.error('Could not search the vault:', error);
+    elements.vaultSearchStatus.textContent = `Search failed: ${error.message}`;
+    const failure = document.createElement('div');
+    failure.className = 'empty-state';
+    failure.textContent = 'Could not search the vault. Check your GitHub connection and access.';
+    elements.noteList.replaceChildren(failure);
+  } finally {
+    if (run === vaultSearchRun) elements.vaultSearchButton.disabled = false;
   }
 }
 
@@ -277,7 +491,9 @@ async function fetchInbox() {
   elements.noteList.append(loading);
   try {
     directoryEntries = await clientFromConfig().listDirectory(currentDirectory);
-    elements.directoryHeading.textContent = currentDirectory.split('/').at(-1) || 'Vault root';
+    elements.directoryHeading.textContent = vaultSearchResults !== null
+      ? 'Vault search results'
+      : currentDirectory.split('/').at(-1) || 'Vault root';
     renderBreadcrumbs();
     renderInbox();
     setConnection(navigator.onLine ? 'online' : 'offline', navigator.onLine ? 'Connected to GitHub' : 'Offline');
@@ -506,14 +722,22 @@ async function syncQueuedNote(note, destination) {
 }
 
 async function openNote(note, heading = null) {
+  readerParentPath = note.path.split('/').slice(0, -1).join('/');
+  const parentName = readerParentPath.split('/').at(-1);
+  const backLabel = parentName ? `Back to ${parentName}` : 'Back to vault';
+  elements.readerBackLabel.textContent = backLabel;
+  elements.readerBack.setAttribute('aria-label', backLabel);
   switchView('reader');
   elements.readerTitle.textContent = formatNoteTitle(note.name);
   elements.readerMeta.textContent = note.path;
+  elements.readerTags.replaceChildren();
+  elements.readerTags.hidden = true;
   elements.readerContent.textContent = 'Loading note…';
   const cacheKey = `note_cache:${note.path}`;
   try {
     const markdown = await clientFromConfig().readNote(note.path);
     await renderVaultNote(markdown, note.path);
+    void recordRecentNote(note);
     try {
       await set(cacheKey, markdown);
     } catch (cacheError) {
@@ -526,6 +750,7 @@ async function openNote(note, heading = null) {
       const cached = await get(cacheKey);
       if (typeof cached === 'string') {
         await renderVaultNote(cached, note.path);
+        void recordRecentNote(note);
         elements.readerMeta.textContent = `${note.path} · Offline copy`;
         showToast('Showing the last saved copy of this note.');
       } else {
@@ -544,14 +769,23 @@ async function openNote(note, heading = null) {
 }
 
 async function renderVaultNote(markdown, path) {
-  let linkedMarkdown = markdown;
+  const note = extractObsidianFrontmatter(markdown);
+  let linkedMarkdown = note.markdown;
   try {
-    linkedMarkdown = resolveWikiLinks(markdown, path, await getMarkdownPaths());
+    linkedMarkdown = resolveWikiLinks(note.markdown, path, await getMarkdownPaths());
   } catch (error) {
     console.error('Could not build the vault link index:', error);
     showToast(`Note opened, but vault links could not be resolved: ${error.message}`);
   }
   updatePreview(linkedMarkdown, elements.readerContent);
+  elements.readerTags.replaceChildren();
+  for (const tagName of note.tags) {
+    const tag = document.createElement('span');
+    tag.className = 'obsidian-tag';
+    tag.textContent = `#${tagName}`;
+    elements.readerTags.append(tag);
+  }
+  elements.readerTags.hidden = note.tags.length === 0;
 }
 
 function navigateVaultLink(href) {
@@ -601,6 +835,7 @@ async function saveSettings(event) {
     const candidate = readSettingsForm();
     localStorage.setItem(CONFIG_KEY, JSON.stringify(candidate));
     config = candidate;
+    resetVaultNavigation();
     populateSettingsForm();
     setConnection(navigator.onLine ? 'online' : 'offline', navigator.onLine ? 'Settings saved' : 'Saved for when you’re online');
     showToast('Vault settings saved on this device.');
@@ -618,6 +853,7 @@ async function testConnection() {
     const branch = await new GitHubClient(candidate).testConnection();
     localStorage.setItem(CONFIG_KEY, JSON.stringify(candidate));
     config = candidate;
+    resetVaultNavigation();
     populateSettingsForm();
     setConnection('online', `Connected · ${branch.name || candidate.branch}`);
     showToast(`Connected to ${candidate.owner}/${candidate.repo} on ${candidate.branch}.`);
@@ -635,6 +871,9 @@ function disconnect() {
   if (!confirm('Remove the GitHub token and vault settings from this device? Queued notes stay here, but you’ll need to reconnect before they can sync.')) return;
   localStorage.removeItem(CONFIG_KEY);
   config = null;
+  recentNotes = [];
+  resetVaultNavigation();
+  renderRecentNotes();
   populateSettingsForm();
   setConnection(navigator.onLine ? 'online' : 'offline', 'Not connected');
   showToast('Vault disconnected. Notes already queued remain on this device.');
@@ -659,6 +898,7 @@ async function initialize() {
     console.error('Could not restore local notes:', error);
     showToast(`Could not restore local notes: ${error.message}`);
   }
+  await refreshRecentNotes();
 
   updatePreview(elements.content.value, elements.preview);
   switchView('capture');
@@ -666,25 +906,42 @@ async function initialize() {
 
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
 $('#top-settings').addEventListener('click', () => switchView('settings'));
-$('#reader-back').addEventListener('click', () => switchView('inbox'));
+elements.readerBack.addEventListener('click', () => {
+  currentDirectory = readerParentPath;
+  elements.search.value = '';
+  clearVaultSearch();
+  switchView('inbox');
+});
 elements.form.addEventListener('submit', saveNote);
+elements.vaultSearchForm.addEventListener('submit', searchVault);
 $('#settings-form').addEventListener('submit', saveSettings);
 $('#test-connection').addEventListener('click', testConnection);
 $('#disconnect').addEventListener('click', disconnect);
 elements.syncButton.addEventListener('click', syncQueue);
 $('#refresh-inbox').addEventListener('click', fetchInbox);
-elements.search.addEventListener('input', renderInbox);
+elements.search.addEventListener('input', () => {
+  clearVaultSearch();
+  renderInbox();
+});
 elements.noteList.addEventListener('click', (event) => {
   const directory = event.target.closest('[data-directory-path]');
   if (directory) {
     currentDirectory = directory.dataset.directoryPath;
     elements.search.value = '';
+    clearVaultSearch();
     fetchInbox();
     return;
   }
   const button = event.target.closest('[data-note-path]');
   if (!button) return;
-  const note = directoryEntries.find((entry) => entry.path === button.dataset.notePath && entry.type === 'file');
+  const note = directoryEntries.find((entry) => entry.path === button.dataset.notePath && entry.type === 'file')
+    || vaultSearchResults?.find((entry) => entry.path === button.dataset.notePath);
+  if (note) openNote(note);
+});
+elements.recentNoteList.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-note-path]');
+  if (!button) return;
+  const note = recentNotes.find((entry) => entry.path === button.dataset.notePath);
   if (note) openNote(note);
 });
 elements.readerContent.addEventListener('click', (event) => {

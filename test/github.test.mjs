@@ -193,6 +193,50 @@ test('listMarkdownPaths reports truncated GitHub trees instead of returning inco
   await assert.rejects(client.listMarkdownPaths(), /too large.*complete file index/i);
 });
 
+test('searchNotes finds title and content matches with a short matching-line snippet', async () => {
+  const requestedPaths = [];
+  const progress = [];
+  const paths = ['Garden/Forest.md', 'Journal/Day.md', 'Reference/Notes.md'];
+  const contents = new Map([
+    ['Journal/Day.md', 'A quiet day.\nWalked through the forest after rain.'],
+    ['Reference/Notes.md', 'No matching word here.']
+  ]);
+  const client = new GitHubClient(config, async (url) => {
+    const path = decodeURIComponent(new URL(url).pathname.split('/contents/')[1]);
+    requestedPaths.push(path);
+    return response(200, { encoding: 'base64', content: encodeUtf8Base64(contents.get(path)) });
+  });
+
+  const results = await client.searchNotes('FOREST', paths, (completed, total) => progress.push([completed, total]));
+  assert.deepEqual(results, [
+    { path: 'Garden/Forest.md', snippet: 'Note title match' },
+    { path: 'Journal/Day.md', snippet: 'Walked through the forest after rain.' }
+  ]);
+  assert.deepEqual(requestedPaths, ['Journal/Day.md', 'Reference/Notes.md']);
+  assert.deepEqual(progress, [[1, 3], [2, 3], [3, 3]]);
+});
+
+test('searchNotes reports the note that could not be read', async () => {
+  const client = new GitHubClient(config, async () => response(403, { message: 'Resource not accessible' }));
+  await assert.rejects(client.searchNotes('forest', ['Garden/Note.md']), /Could not search.*Garden\/Note\.md.*HTTP 403/);
+});
+
+test('searchNotes limits concurrent GitHub content requests', async () => {
+  let activeRequests = 0;
+  let maximumRequests = 0;
+  const client = new GitHubClient(config, async () => {
+    activeRequests += 1;
+    maximumRequests = Math.max(maximumRequests, activeRequests);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    activeRequests -= 1;
+    return response(200, { encoding: 'base64', content: encodeUtf8Base64('No match here.') });
+  });
+
+  const paths = Array.from({ length: 9 }, (_, index) => `Note ${index}.md`);
+  assert.deepEqual(await client.searchNotes('forest', paths), []);
+  assert.equal(maximumRequests, 4);
+});
+
 test('GitHub API errors preserve status and actionable message', async () => {
   const client = new GitHubClient(config, async () => response(403, { message: 'Resource not accessible by personal access token' }));
   await assert.rejects(client.testConnection(), (error) => {

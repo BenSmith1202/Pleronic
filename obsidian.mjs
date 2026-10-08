@@ -44,6 +44,49 @@ export function headingSlug(heading) {
     .replace(/\s+/g, '-');
 }
 
+export function extractObsidianFrontmatter(markdown) {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!match) return { markdown, tags: [] };
+
+  const lines = match[1].split(/\r?\n/);
+  const tags = [];
+  const remainingLines = [];
+  let collectingList = false;
+  let hasTags = false;
+  for (const line of lines) {
+    const tagField = line.match(/^tags\s*:\s*(.*)$/i);
+    if (tagField) {
+      hasTags = true;
+      collectingList = !tagField[1].trim();
+      const inlineTags = tagField[1].trim().replace(/^\[|\]$/g, '');
+      if (inlineTags) tags.push(...inlineTags.split(','));
+      continue;
+    }
+    if (collectingList && /^\s+-\s+/.test(line)) {
+      tags.push(line.replace(/^\s+-\s+/, ''));
+      continue;
+    }
+    if (collectingList && /^\s*$/.test(line)) continue;
+    if (collectingList && /^\S/.test(line)) collectingList = false;
+    remainingLines.push(line);
+  }
+
+  const uniqueTags = [...new Set(tags.map((tag) => tag
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .replace(/^#/, '')
+  ).filter((tag) => /^[\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*$/u.test(tag)))];
+
+  if (!hasTags) return { markdown, tags: [] };
+  const remainingFrontmatter = remainingLines.some((line) => line.trim())
+    ? `---\n${remainingLines.join('\n')}\n---\n`
+    : '';
+  return {
+    markdown: `${remainingFrontmatter}${markdown.slice(match[0].length)}`,
+    tags: uniqueTags
+  };
+}
+
 function escapeMarkdownLabel(value) {
   return value.replace(/[\\[\]]/g, '\\$&');
 }

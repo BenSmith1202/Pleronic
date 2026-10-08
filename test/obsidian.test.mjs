@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { headingSlug, resolveWikiLink, resolveWikiLinks } from '../obsidian.mjs';
+import { extractObsidianFrontmatter, headingSlug, resolveWikiLink, resolveWikiLinks } from '../obsidian.mjs';
 
 const paths = [
   'Home.md',
@@ -53,4 +53,25 @@ test('wiki links preserve aliases and are not rewritten inside code', () => {
 
 test('heading slugs are stable for punctuation, accents, and spacing', () => {
   assert.equal(headingSlug('  Café & Trees!  '), 'cafe-trees');
+});
+
+test('frontmatter tags support inline arrays and nested tag names', () => {
+  const result = extractObsidianFrontmatter('---\ntitle: Forest walk\ntags: [garden, "project/trees", \'#field-notes\']\n---\n\nA quiet path.');
+  assert.deepEqual(result, {
+    markdown: '---\ntitle: Forest walk\n---\n\nA quiet path.',
+    tags: ['garden', 'project/trees', 'field-notes']
+  });
+});
+
+test('frontmatter tags support YAML lists and ignore malformed tag values', () => {
+  const result = extractObsidianFrontmatter('---\ntags:\n  - garden\n  - field/notes\n  - invalid tag\nother: value\n---\nNote body.');
+  assert.deepEqual(result, {
+    markdown: '---\nother: value\n---\nNote body.',
+    tags: ['garden', 'field/notes']
+  });
+});
+
+test('notes without frontmatter remain unchanged', () => {
+  const markdown = '# A note\n\nNo properties here.';
+  assert.deepEqual(extractObsidianFrontmatter(markdown), { markdown, tags: [] });
 });

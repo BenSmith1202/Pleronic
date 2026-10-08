@@ -8,8 +8,8 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="description" content="A quiet place to capture notes straight to your Obsidian vault.">
     <link rel="manifest" href="manifest.json">
-    <link rel="icon" href="icon.png" type="image/png">
-    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
     <title>Pleronic — your vault, within reach</title>
     <style>
       :root {
@@ -123,13 +123,29 @@
       .inbox-toolbar { display: flex; gap: 10px; margin: 24px 0 16px; }
       .inbox-toolbar input { min-width: 0; }
       .inbox-toolbar .button { flex: 0 0 auto; }
+      .vault-search { margin: 22px 0; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgb(249 252 251 / 78%); }
+      .vault-search-heading { display: block; margin: 0 0 10px; color: var(--ink); font-size: 14px; font-weight: 650; }
+      .recent-heading { margin: 0 0 10px; color: var(--ink); font-size: 14px; font-weight: 650; }
+      .vault-search-row { display: flex; gap: 9px; }
+      .vault-search-row input { min-width: 0; }
+      .vault-search-help, .vault-search-status { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+      .vault-search-status:empty { display: none; }
+      .recent-notes { margin: 20px 0 24px; }
+      .recent-note-list { display: grid; gap: 7px; }
+      .recent-note-card { padding: 11px 13px; }
+      .recent-when { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 10px; }
+      .search-snippet { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.45; }
+      .obsidian-tag { display: inline-block; margin: 2px 3px 2px 0; padding: 2px 8px; border: 1px solid #c6dcda; border-radius: 999px; background: #e8f2ef; color: #38675d; font-size: .78em; font-weight: 600; line-height: 1.5; vertical-align: baseline; }
+      .reader-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: -10px 0 20px; }
+      .reader-tags[hidden] { display: none; }
+      .reader-tags .obsidian-tag { margin: 0; font-size: 11px; }
       .note-list { display: grid; gap: 9px; }
       .note-card { display: flex; align-items: center; gap: 14px; width: 100%; padding: 15px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: inherit; text-align: left; }
       .note-card:hover { border-color: #abc8c6; box-shadow: 0 5px 18px rgb(31 57 54 / 6%); }
       .note-file { display: grid; width: 35px; height: 35px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #e2edf0; color: var(--blue); font-size: 14px; }
-      .note-info { min-width: 0; }
-      .note-name { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-      .note-meta { margin-top: 4px; color: var(--muted); font-size: 11px; }
+      .note-info { display: grid; min-width: 0; gap: 5px; }
+      .note-name { display: block; overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .note-meta { display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
       .note-arrow { margin-left: auto; color: #819795; }
       .empty-state { padding: 34px 20px; border: 1px dashed #c9d8d5; border-radius: 12px; color: var(--muted); text-align: center; }
       .empty-state strong { display: block; margin-bottom: 7px; color: var(--ink); font-family: Georgia, serif; font-size: 19px; font-weight: 400; }
@@ -160,6 +176,8 @@
         .queue-banner { align-items: flex-start; }
         .inbox-toolbar { flex-wrap: wrap; }
         .inbox-toolbar input { flex: 1 1 100%; }
+        .vault-search-row { flex-wrap: wrap; }
+        .vault-search-row input { flex: 1 1 100%; }
         .settings-grid { grid-template-columns: 1fr; }
         .settings-field.full { grid-column: auto; }
       }
@@ -236,6 +254,21 @@
           <p class="eyebrow">A window into your notes</p>
           <h1 id="inbox-heading">Explore your vault.</h1>
           <p class="lead" id="inbox-description">Browse your Obsidian folders and read notes without leaving Pleronic.</p>
+          <form class="vault-search" id="vault-search-form">
+            <label class="vault-search-heading" for="vault-search-input">Search the whole vault</label>
+            <div class="vault-search-row">
+              <input id="vault-search-input" type="search" placeholder="Search note names and contents…" autocomplete="off">
+              <button class="button secondary" id="vault-search-button" type="submit">Search vault</button>
+            </div>
+            <p class="vault-search-help">Search scans Markdown files in this GitHub repository and may take a moment for large vaults.</p>
+            <p class="vault-search-status" id="vault-search-status" role="status" aria-live="polite"></p>
+          </form>
+          <section class="recent-notes" aria-labelledby="recent-heading">
+            <h2 class="recent-heading" id="recent-heading">Recently viewed</h2>
+            <div class="recent-note-list" id="recent-note-list">
+              <p class="vault-search-help">Notes you open will appear here on this device.</p>
+            </div>
+          </section>
           <nav class="vault-breadcrumbs" id="vault-breadcrumbs" aria-label="Vault folder path"></nav>
           <p class="directory-heading" id="directory-heading">Vault root</p>
           <div class="inbox-toolbar">
@@ -286,10 +319,14 @@
         </section>
 
         <section class="view" id="view-reader" aria-labelledby="reader-title">
-          <button class="text-button reader-back" id="reader-back" type="button">← Back to inbox</button>
+          <button class="text-button reader-back" id="reader-back" type="button" aria-label="Back to vault">
+            <span aria-hidden="true">←</span>
+            <span id="reader-back-label">Back to vault</span>
+          </button>
           <p class="eyebrow">From your vault</p>
           <h1 class="reader-title" id="reader-title"></h1>
           <p class="reader-meta" id="reader-meta"></p>
+          <div class="reader-tags" id="reader-tags" aria-label="Note tags" hidden></div>
           <article class="reader-card markdown" id="reader-content"></article>
         </section>
       </main>

@@ -164,6 +164,46 @@ export class GitHubClient {
     return decodeUtf8Base64(file.content);
   }
 
+  async searchNotes(query, paths, onProgress = () => {}) {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return [];
+    if (!Array.isArray(paths)) throw new Error('A vault file index is required to search notes.');
+
+    const matches = [];
+    let nextIndex = 0;
+    let completed = 0;
+    let firstError = null;
+    const searchNext = async () => {
+      while (nextIndex < paths.length && !firstError) {
+        const path = paths[nextIndex];
+        nextIndex += 1;
+        try {
+          if (path.split('/').at(-1).toLocaleLowerCase().includes(normalizedQuery)) {
+            matches.push({ path, snippet: 'Note title match' });
+          } else {
+            const content = await this.readNote(path);
+            const matchingLine = content.split(/\r?\n/).find((line) => line.toLocaleLowerCase().includes(normalizedQuery));
+            if (matchingLine !== undefined) {
+              const line = matchingLine.trim();
+              matches.push({
+                path,
+                snippet: line.length > 180 ? `${line.slice(0, 177)}…` : line
+              });
+            }
+          }
+        } catch (error) {
+          firstError = new Error(`Could not search “${path}”: ${error.message}`, { cause: error });
+        }
+        completed += 1;
+        onProgress(completed, paths.length);
+      }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(4, paths.length) }, searchNext));
+    if (firstError) throw firstError;
+    return matches.sort((left, right) => left.path.localeCompare(right.path, undefined, { sensitivity: 'base' }));
+  }
+
   async createNote(path, content, title) {
     const encodedPath = path.split('/').map(encodeURIComponent).join('/');
     const response = await this.request(`${this.repositoryPath}/contents/${encodedPath}`, {
