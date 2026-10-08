@@ -1,12 +1,12 @@
 {
-  "name": "Pleronic",
-  "short_name": "Vault",
+  "name": "Fieldnotes — Obsidian capture",
+  "short_name": "Fieldnotes",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#1e1e1e",
-  "theme_color": "#7d5cf5",
+  "background_color": "#f5f4f0",
+  "theme_color": "#f5f4f0",
   "orientation": "portrait",
-  "description": "Capture notes and sync them to a GitHub-backed Obsidian inbox.",
+  "description": "Capture notes straight to your GitHub-backed Obsidian vault.",
   "icons": [
     {
       "src": "icon.svg",

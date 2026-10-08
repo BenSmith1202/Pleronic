@@ -1,0 +1,134 @@
+const API_ROOT = 'https://api.github.com';
+
+export class GitHubApiError extends Error {
+  constructor(status, message) {
+    super(`GitHub returned HTTP ${status}: ${message}`);
+    this.name = 'GitHubApiError';
+    this.status = status;
+  }
+}
+
+export function validateConfig(config) {
+  const required = ['owner', 'repo', 'token'];
+  for (const field of required) {
+    if (typeof config?.[field] !== 'string' || !config[field].trim()) {
+      throw new Error(`Enter a GitHub ${field}.`);
+    }
+  }
+
+  const branch = typeof config.branch === 'string' && config.branch.trim() ? config.branch.trim() : 'main';
+  if ([config.owner, config.repo, branch].some((value) => /[/\\\u0000-\u001f]/.test(value))) {
+    throw new Error('Owner, repository, and branch must not contain slashes or control characters.');
+  }
+
+  const folderValue = typeof config.folder === 'string' ? config.folder : 'inbox';
+  const folder = folderValue.trim().replace(/^\/+|\/+$/g, '');
+  if (folder.split('/').some((segment) => segment === '.' || segment === '..') || /[\\\u0000-\u001f]/.test(folder)) {
+    throw new Error('The inbox folder must be a valid repository path.');
+  }
+
+  return {
+    owner: config.owner.trim(),
+    repo: config.repo.trim(),
+    branch,
+    folder,
+    token: config.token.trim()
+  };
+}
+
+export function encodeUtf8Base64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+export function decodeUtf8Base64(base64) {
+  const binary = atob(base64.replace(/\s/g, ''));
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+export class GitHubClient {
+  constructor(config, fetchImpl = globalThis.fetch) {
+    this.config = validateConfig(config);
+    this.fetch = fetchImpl;
+    this.repositoryPath = `/repos/${encodeURIComponent(this.config.owner)}/${encodeURIComponent(this.config.repo)}`;
+  }
+
+  async request(path, options = {}) {
+    const response = await this.fetch(`${API_ROOT}${path}`, {
+      ...options,
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${this.config.token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...(options.headers || {})
+      }
+    });
+
+    const responseText = await response.text();
+    let body;
+    try {
+      body = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      body = null;
+    }
+
+    if (!response.ok) {
+      const message = typeof body?.message === 'string' ? body.message : response.statusText || 'Request failed';
+      throw new GitHubApiError(response.status, message);
+    }
+    if (body === null) throw new Error('GitHub returned an invalid response.');
+    return body;
+  }
+
+  async testConnection() {
+    const branch = encodeURIComponent(this.config.branch);
+    return this.request(`${this.repositoryPath}/branches/${branch}`);
+  }
+
+  async listNotes() {
+    const directory = this.config.folder
+      ? `/contents/${this.config.folder.split('/').map(encodeURIComponent).join('/')}`
+      : '/contents';
+    const ref = new URLSearchParams({ ref: this.config.branch }).toString();
+    let entries;
+    try {
+      entries = await this.request(`${this.repositoryPath}${directory}?${ref}`);
+    } catch (error) {
+      if (!(error instanceof GitHubApiError) || error.status !== 404 || !this.config.folder) throw error;
+      await this.testConnection();
+      return [];
+    }
+    if (!Array.isArray(entries)) throw new Error('GitHub returned an invalid inbox listing.');
+    return entries
+      .filter((entry) => entry.type === 'file' && typeof entry.name === 'string' && entry.name.toLowerCase().endsWith('.md'))
+      .sort((left, right) => right.name.localeCompare(left.name));
+  }
+
+  async readNote(path) {
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const ref = new URLSearchParams({ ref: this.config.branch }).toString();
+    const file = await this.request(`${this.repositoryPath}/contents/${encodedPath}?${ref}`);
+    if (file.encoding !== 'base64' || typeof file.content !== 'string') {
+      throw new Error('GitHub returned an unsupported note format.');
+    }
+    return decodeUtf8Base64(file.content);
+  }
+
+  async createNote(path, content, title) {
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const response = await this.request(`${this.repositoryPath}/contents/${encodedPath}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `Add note: ${title}`,
+        content: encodeUtf8Base64(content),
+        branch: this.config.branch
+      })
+    });
+    if (!response.content?.path) throw new Error('GitHub did not confirm that the note was saved.');
+    return response;
+  }
+}

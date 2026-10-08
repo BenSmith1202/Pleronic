@@ -1,7 +1,9 @@
-const CACHE_NAME = 'pleronic-v4';
+const CACHE_NAME = 'pleronic-v5';
 const ASSETS = [
   './',
   './index.html',
+  './app.mjs',
+  './github.mjs',
   './manifest.json',
   './icon.svg',
   './vendor/marked.esm.js',
@@ -19,7 +21,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
-      keys
+      keys 
         .filter((key) => key !== CACHE_NAME)
         .map((key) => caches.delete(key))
     )).then(() => self.clients.claim())

@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python -c 'from pathlib import Path; p=Path\\(\"index\\.html\"\\); lines=p\\.read_text\\(\\)\\.splitlines\\(\\); print\\(\"lines\",len\\(lines\\)\\); \\[\\(print\\(f\"\\{i\\+1\\}: \\{line\\.lstrip\\(\\)\\}\"\\)\\) for i,line in enumerate\\(lines\\)\\]'$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
