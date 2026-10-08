@@ -53,6 +53,12 @@
       .vault-eyebrow { margin-bottom: 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
       .vault-name { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
       .vault-branch { margin-top: 4px; color: var(--muted); font-size: 11px; }
+      .vault-breadcrumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; color: var(--muted); font-size: 12px; }
+      .breadcrumb { padding: 4px 6px; border: 0; border-radius: 5px; background: transparent; color: var(--green); font-size: inherit; }
+      .breadcrumb:hover { background: var(--green-wash); }
+      .breadcrumb-separator { color: #8ba09d; }
+      .breadcrumb-current { color: var(--ink); font-weight: 650; }
+      .directory-heading { margin: 0 0 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
       .connection { display: flex; align-items: center; gap: 8px; margin: 14px 2px 0; color: var(--muted); font-size: 12px; }
       .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: #91a3a1; }
       .connection[data-state="online"] .connection-dot { background: #528b72; }
@@ -126,6 +132,7 @@
       .note-arrow { margin-left: auto; color: #819795; }
       .empty-state { padding: 34px 20px; border: 1px dashed #c9d8d5; border-radius: 12px; color: var(--muted); text-align: center; }
       .empty-state strong { display: block; margin-bottom: 7px; color: var(--ink); font-family: Georgia, serif; font-size: 19px; font-weight: 400; }
+      .note-kind { min-width: 37px; color: var(--muted); font-size: 10px; text-align: right; }
       .settings-card { margin: 22px 0; }
       .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
       .settings-field { min-width: 0; }
@@ -174,7 +181,7 @@
         <p class="nav-label">Workspace</p>
         <nav class="nav-list" aria-label="Workspace">
           <button class="nav-button active" data-view="capture"><span class="nav-icon" aria-hidden="true">＋</span>Capture</button>
-          <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Inbox<span class="queue-count" id="queue-count" hidden>0</span></button>
+          <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Vault<span class="queue-count" id="queue-count" hidden>0</span></button>
           <button class="nav-button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</button>
         </nav>
         <div class="sidebar-bottom">
@@ -225,13 +232,15 @@
         </section>
 
         <section class="view" id="view-inbox" aria-labelledby="inbox-heading">
-          <p class="eyebrow">Your latest thoughts</p>
-          <h1 id="inbox-heading">The inbox.</h1>
-          <p class="lead" id="inbox-description">Notes waiting for you in your Obsidian vault.</p>
+          <p class="eyebrow">A window into your notes</p>
+          <h1 id="inbox-heading">Explore your vault.</h1>
+          <p class="lead" id="inbox-description">Browse your Obsidian folders and read notes without leaving Pleronic.</p>
+          <nav class="vault-breadcrumbs" id="vault-breadcrumbs" aria-label="Vault folder path"></nav>
+          <p class="directory-heading" id="directory-heading">Vault root</p>
           <div class="inbox-toolbar">
-            <label class="sr-only" for="inbox-search">Search inbox</label>
-            <input id="inbox-search" type="search" placeholder="Search note titles…" autocomplete="off">
-            <button class="button secondary" id="refresh-inbox" type="button">Refresh</button>
+            <label class="sr-only" for="inbox-search">Filter this folder</label>
+            <input id="inbox-search" type="search" placeholder="Filter this folder…" autocomplete="off">
+            <button class="button secondary" id="refresh-inbox" type="button">Refresh folder</button>
           </div>
           <div class="note-list" id="note-list" aria-live="polite"></div>
         </section>
@@ -286,7 +295,7 @@
 
       <nav class="mobile-nav" aria-label="Main navigation">
         <button class="nav-button active" data-view="capture"><span class="nav-icon" aria-hidden="true">＋</span>Capture</button>
-        <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Inbox<span class="queue-count" id="mobile-queue-count" hidden>0</span></button>
+        <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Vault<span class="queue-count" id="mobile-queue-count" hidden>0</span></button>
         <button class="nav-button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</button>
       </nav>
     </div>

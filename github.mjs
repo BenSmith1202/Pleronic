@@ -119,6 +119,41 @@ export class GitHubClient {
       .sort((left, right) => right.name.localeCompare(left.name));
   }
 
+  async listDirectory(path = '') {
+    const encodedPath = path ? `/${path.split('/').map(encodeURIComponent).join('/')}` : '';
+    const ref = new URLSearchParams({ ref: this.config.branch }).toString();
+    const entries = await this.request(`${this.repositoryPath}/contents${encodedPath}?${ref}`);
+    if (!Array.isArray(entries)) {
+      throw new Error(`GitHub did not return a directory listing for ${path || 'the vault root'}.`);
+    }
+    return entries
+      .filter((entry) => entry.type === 'dir' || (entry.type === 'file' && /\.md$/i.test(entry.name)))
+      .sort((left, right) => {
+        if (left.type !== right.type) return left.type === 'dir' ? -1 : 1;
+        return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
+      });
+  }
+
+  async listMarkdownPaths() {
+    const branch = encodeURIComponent(this.config.branch);
+    const ref = new URLSearchParams({ recursive: '1' }).toString();
+    const branchInfo = await this.request(`${this.repositoryPath}/branches/${branch}`);
+    const treeSha = branchInfo.commit?.commit?.tree?.sha;
+    if (typeof treeSha !== 'string' || !treeSha) {
+      throw new Error('GitHub did not return the configured branch’s file tree.');
+    }
+    const tree = await this.request(`${this.repositoryPath}/git/trees/${encodeURIComponent(treeSha)}?${ref}`);
+    if (!Array.isArray(tree.tree) || typeof tree.truncated !== 'boolean') {
+      throw new Error('GitHub returned an invalid vault file index.');
+    }
+    if (tree.truncated) {
+      throw new Error('This vault is too large for GitHub’s complete file index. Folder navigation still works, but wiki links may not resolve.');
+    }
+    return tree.tree
+      .filter((entry) => entry.type === 'blob' && typeof entry.path === 'string' && /\.md$/i.test(entry.path))
+      .map((entry) => entry.path);
+  }
+
   async readNote(path) {
     const encodedPath = path.split('/').map(encodeURIComponent).join('/');
     const ref = new URLSearchParams({ ref: this.config.branch }).toString();

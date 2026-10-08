@@ -1,9 +1,10 @@
-const CACHE_NAME = 'pleronic-v9';
+const CACHE_NAME = 'pleronic-v10';
 const ASSETS = [
   './',
   './index.html',
   './app.mjs',
   './github.mjs',
+  './obsidian.mjs',
   './manifest.json',
   './icon.svg',
   './vendor/marked.esm.js',

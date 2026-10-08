@@ -1,6 +1,7 @@
 import { marked } from './vendor/marked.esm.js';
 import { del, get, set } from './vendor/idb-keyval.js';
 import { GitHubApiError, GitHubClient, noteFilename, validateConfig } from './github.mjs';
+import { headingSlug, resolveWikiLinks } from './obsidian.mjs';
 
 const CONFIG_KEY = 'obsidian_config';
 const QUEUE_KEY = 'sync_queue';
@@ -31,6 +32,8 @@ const elements = {
   previewTab: $('#preview-tab'),
   noteList: $('#note-list'),
   inboxDescription: $('#inbox-description'),
+  breadcrumbs: $('#vault-breadcrumbs'),
+  directoryHeading: $('#directory-heading'),
   search: $('#inbox-search'),
   readerTitle: $('#reader-title'),
   readerMeta: $('#reader-meta'),
@@ -46,7 +49,10 @@ const elements = {
 };
 
 let config = loadConfig();
-let inboxNotes = [];
+let directoryEntries = [];
+let currentDirectory = '';
+let markdownPathIndex = null;
+let markdownPathIndexKey = '';
 let currentView = 'capture';
 let syncInProgress = false;
 let toastTimer;
@@ -167,10 +173,18 @@ function updatePreview(markdown, target) {
 
   for (const child of parsed.body.childNodes) copySafeNode(child, fragment);
   target.replaceChildren(fragment);
+  const headingCounts = new Map();
+  for (const heading of target.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+    const base = headingSlug(heading.textContent);
+    const count = headingCounts.get(base) || 0;
+    headingCounts.set(base, count + 1);
+    heading.id = count ? `${base}-${count}` : base;
+  }
 }
 
 function safeUrl(value, image) {
   if (!value) return null;
+  if (!image && value.startsWith('vault:')) return value;
   try {
     const url = new URL(value, location.href);
     const allowed = image ? ['https:', 'http:'] : ['https:', 'http:', 'mailto:'];
@@ -197,64 +211,74 @@ function formatNoteTitle(name) {
 
 function renderInbox() {
   const query = elements.search.value.trim().toLocaleLowerCase();
-  const notes = inboxNotes.filter((note) => note.name.toLocaleLowerCase().includes(query));
+  const entries = directoryEntries.filter((entry) => entry.name.toLocaleLowerCase().includes(query));
   elements.noteList.replaceChildren();
 
-  if (notes.length === 0) {
+  if (entries.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('strong');
-    heading.textContent = query ? 'No notes match that search.' : 'Nothing here just yet.';
+    heading.textContent = query ? 'No folders or notes match that filter.' : 'This folder is empty.';
     const detail = document.createElement('span');
-    detail.textContent = query ? 'Try another title.' : 'Capture a thought and it will land here.';
+    detail.textContent = query ? 'Try another name.' : currentDirectory ? 'Try another folder or go back up a level.' : 'Capture a thought and it will land here.';
     empty.append(heading, detail);
     elements.noteList.append(empty);
     return;
   }
 
-  for (const note of notes) {
+  for (const entry of entries) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'note-card';
-    button.dataset.notePath = note.path;
+    if (entry.type === 'dir') button.dataset.directoryPath = entry.path;
+    else button.dataset.notePath = entry.path;
     const icon = document.createElement('span');
     icon.className = 'note-file';
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = '▤';
+    icon.textContent = entry.type === 'dir' ? '▱' : '▤';
     const info = document.createElement('span');
     info.className = 'note-info';
     const title = document.createElement('span');
     title.className = 'note-name';
-    title.textContent = formatNoteTitle(note.name);
+    title.textContent = entry.type === 'dir' ? entry.name : formatNoteTitle(entry.name);
     const meta = document.createElement('span');
     meta.className = 'note-meta';
-    meta.textContent = note.updated_at ? `Updated ${new Date(note.updated_at).toLocaleDateString()}` : note.path;
+    meta.textContent = entry.type === 'dir'
+      ? `Folder · ${entry.path}`
+      : entry.path;
     info.append(title, meta);
+    const kind = document.createElement('span');
+    kind.className = 'note-kind';
+    kind.textContent = entry.type === 'dir' ? 'FOLDER' : 'NOTE';
     const arrow = document.createElement('span');
     arrow.className = 'note-arrow';
     arrow.setAttribute('aria-hidden', 'true');
     arrow.textContent = '→';
-    button.append(icon, info, arrow);
+    button.append(icon, info, kind, arrow);
     elements.noteList.append(button);
   }
 }
 
 async function fetchInbox() {
   if (!config) {
-    inboxNotes = [];
+    directoryEntries = [];
     elements.inboxDescription.textContent = 'Connect a GitHub repository in Settings to browse your vault.';
+    elements.directoryHeading.textContent = 'Vault root';
+    renderBreadcrumbs();
     renderInbox();
     return;
   }
 
-  elements.inboxDescription.textContent = `${config.owner}/${config.repo} · ${config.folder || 'repository root'}`;
+  elements.inboxDescription.textContent = `${config.owner}/${config.repo} · read-only`;
   elements.noteList.replaceChildren();
   const loading = document.createElement('div');
   loading.className = 'empty-state';
   loading.textContent = 'Opening your vault…';
   elements.noteList.append(loading);
   try {
-    inboxNotes = await clientFromConfig().listNotes();
+    directoryEntries = await clientFromConfig().listDirectory(currentDirectory);
+    elements.directoryHeading.textContent = currentDirectory.split('/').at(-1) || 'Vault root';
+    renderBreadcrumbs();
     renderInbox();
     setConnection(navigator.onLine ? 'online' : 'offline', navigator.onLine ? 'Connected to GitHub' : 'Offline');
   } catch (error) {
@@ -262,13 +286,57 @@ async function fetchInbox() {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('strong');
-    heading.textContent = 'Could not open the inbox.';
+    heading.textContent = 'Could not open this folder.';
     const detail = document.createElement('span');
     detail.textContent = error.message;
     empty.append(heading, detail);
     elements.noteList.replaceChildren(empty);
     setConnection('error', 'GitHub connection needs attention');
   }
+}
+
+function renderBreadcrumbs() {
+  elements.breadcrumbs.replaceChildren();
+  const root = document.createElement('button');
+  root.type = 'button';
+  root.className = currentDirectory ? 'breadcrumb' : 'breadcrumb breadcrumb-current';
+  root.textContent = config?.repo || 'Vault';
+  root.dataset.directoryPath = '';
+  elements.breadcrumbs.append(root);
+
+  const parts = currentDirectory.split('/').filter(Boolean);
+  let path = '';
+  parts.forEach((part, index) => {
+    const separator = document.createElement('span');
+    separator.className = 'breadcrumb-separator';
+    separator.setAttribute('aria-hidden', 'true');
+    separator.textContent = '/';
+    elements.breadcrumbs.append(separator);
+    path = path ? `${path}/${part}` : part;
+    const crumb = document.createElement('button');
+    crumb.type = 'button';
+    crumb.className = index === parts.length - 1 ? 'breadcrumb breadcrumb-current' : 'breadcrumb';
+    crumb.textContent = part;
+    crumb.dataset.directoryPath = path;
+    elements.breadcrumbs.append(crumb);
+  });
+}
+
+function vaultIndexKey() {
+  return config ? `${config.owner}/${config.repo}@${config.branch}` : '';
+}
+
+function invalidateMarkdownPathIndex() {
+  markdownPathIndex = null;
+  markdownPathIndexKey = '';
+}
+
+async function getMarkdownPaths() {
+  const key = vaultIndexKey();
+  if (markdownPathIndex && key === markdownPathIndexKey) return markdownPathIndex;
+  markdownPathIndex = await clientFromConfig().listMarkdownPaths();
+  markdownPathIndexKey = key;
+  return markdownPathIndex;
 }
 
 async function storeDraft() {
@@ -322,6 +390,7 @@ async function saveNote(event) {
       return;
     }
     await clientFromConfig().createNote(repositoryPath(note), note.content, note.title);
+    invalidateMarkdownPathIndex();
     showToast('Note saved to your vault.');
     clearEditor();
     if (currentView === 'inbox') fetchInbox();
@@ -426,6 +495,7 @@ async function syncQueuedNote(note, destination) {
   const path = repositoryPath(note, destination);
   try {
     await client.createNote(path, note.content, note.title);
+    invalidateMarkdownPathIndex();
   } catch (error) {
     if (!(error instanceof GitHubApiError) || error.status !== 422) throw error;
     const existing = await client.readNote(path);
@@ -435,7 +505,7 @@ async function syncQueuedNote(note, destination) {
   }
 }
 
-async function openNote(note) {
+async function openNote(note, heading = null) {
   switchView('reader');
   elements.readerTitle.textContent = formatNoteTitle(note.name);
   elements.readerMeta.textContent = note.path;
@@ -443,7 +513,7 @@ async function openNote(note) {
   const cacheKey = `note_cache:${note.path}`;
   try {
     const markdown = await clientFromConfig().readNote(note.path);
-    updatePreview(markdown, elements.readerContent);
+    await renderVaultNote(markdown, note.path);
     try {
       await set(cacheKey, markdown);
     } catch (cacheError) {
@@ -455,7 +525,7 @@ async function openNote(note) {
     try {
       const cached = await get(cacheKey);
       if (typeof cached === 'string') {
-        updatePreview(cached, elements.readerContent);
+        await renderVaultNote(cached, note.path);
         elements.readerMeta.textContent = `${note.path} · Offline copy`;
         showToast('Showing the last saved copy of this note.');
       } else {
@@ -467,6 +537,43 @@ async function openNote(note) {
       elements.readerContent.textContent = `${error.message} (Offline cache unavailable: ${cacheError.message})`;
     }
   }
+  if (heading) {
+    const target = elements.readerContent.querySelector(`#${CSS.escape(headingSlug(heading))}`);
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
+async function renderVaultNote(markdown, path) {
+  let linkedMarkdown = markdown;
+  try {
+    linkedMarkdown = resolveWikiLinks(markdown, path, await getMarkdownPaths());
+  } catch (error) {
+    console.error('Could not build the vault link index:', error);
+    showToast(`Note opened, but vault links could not be resolved: ${error.message}`);
+  }
+  updatePreview(linkedMarkdown, elements.readerContent);
+}
+
+function navigateVaultLink(href) {
+  const [encodedPath, encodedHeading] = href.slice('vault:'.length).split('#', 2);
+  let path;
+  let heading;
+  try {
+    path = decodeURIComponent(encodedPath);
+    heading = encodedHeading ? decodeURIComponent(encodedHeading) : null;
+  } catch (error) {
+    console.error('Could not decode vault link:', error);
+    showToast('This vault link is invalid.');
+    return;
+  }
+
+  const targetPath = markdownPathIndex?.find((entry) => entry.toLocaleLowerCase() === path.toLocaleLowerCase());
+  if (!targetPath) {
+    showToast('That note could not be found in the vault.');
+    return;
+  }
+  const name = targetPath.split('/').at(-1);
+  void openNote({ name, path: targetPath }, heading);
 }
 
 function populateSettingsForm() {
@@ -568,10 +675,33 @@ elements.syncButton.addEventListener('click', syncQueue);
 $('#refresh-inbox').addEventListener('click', fetchInbox);
 elements.search.addEventListener('input', renderInbox);
 elements.noteList.addEventListener('click', (event) => {
+  const directory = event.target.closest('[data-directory-path]');
+  if (directory) {
+    currentDirectory = directory.dataset.directoryPath;
+    elements.search.value = '';
+    fetchInbox();
+    return;
+  }
   const button = event.target.closest('[data-note-path]');
   if (!button) return;
-  const note = inboxNotes.find((entry) => entry.path === button.dataset.notePath);
+  const note = directoryEntries.find((entry) => entry.path === button.dataset.notePath && entry.type === 'file');
   if (note) openNote(note);
+});
+elements.readerContent.addEventListener('click', (event) => {
+  const link = event.target.closest('a[href^="vault:"]');
+  if (link) {
+    event.preventDefault();
+    navigateVaultLink(link.getAttribute('href'));
+    return;
+  }
+  const headingLink = event.target.closest('a[href^="#"]');
+  if (headingLink) {
+    const heading = elements.readerContent.querySelector(`#${CSS.escape(decodeURIComponent(headingLink.hash.slice(1)))}`);
+    if (heading) {
+      event.preventDefault();
+      heading.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
 });
 elements.writeTab.addEventListener('click', () => {
   elements.content.hidden = false;

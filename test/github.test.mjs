@@ -142,6 +142,57 @@ test('a missing inbox folder is empty when the configured branch exists', async 
   assert.match(requestedUrls[1], /\/branches\/main$/);
 });
 
+test('listDirectory shows folders and Markdown notes, with folders first', async () => {
+  let requestedUrl;
+  const client = new GitHubClient(config, async (url) => {
+    requestedUrl = url;
+    return response(200, [
+      { type: 'file', name: 'zebra.md', path: 'zebra.md' },
+      { type: 'file', name: 'photo.png', path: 'photo.png' },
+      { type: 'dir', name: 'Work', path: 'Work' },
+      { type: 'file', name: 'alpha.MD', path: 'alpha.MD' }
+    ]);
+  });
+
+  const entries = await client.listDirectory('Projects/Field Notes');
+  assert.match(requestedUrl, /\/contents\/Projects\/Field%20Notes\?ref=main$/);
+  assert.deepEqual(entries.map((entry) => entry.name), ['Work', 'alpha.MD', 'zebra.md']);
+});
+
+test('listMarkdownPaths requests the recursive branch tree and returns Markdown paths', async () => {
+  const requestedUrls = [];
+  const client = new GitHubClient(config, async (url) => {
+    requestedUrls.push(url);
+    if (requestedUrls.length === 1) {
+      return response(200, { commit: { commit: { tree: { sha: 'tree-sha' } } } });
+    }
+    return response(200, {
+        truncated: false,
+        tree: [
+          { type: 'blob', path: 'Home.md' },
+          { type: 'blob', path: 'Journal/Today.MD' },
+          { type: 'blob', path: 'image.png' },
+          { type: 'tree', path: 'Journal' }
+        ]
+      });
+  });
+
+  assert.deepEqual(await client.listMarkdownPaths(), ['Home.md', 'Journal/Today.MD']);
+  assert.match(requestedUrls[0], /\/branches\/main$/);
+  assert.match(requestedUrls[1], /\/git\/trees\/tree-sha\?recursive=1$/);
+});
+
+test('listMarkdownPaths reports truncated GitHub trees instead of returning incomplete links', async () => {
+  let requestCount = 0;
+  const client = new GitHubClient(config, async () => {
+    requestCount += 1;
+    return requestCount === 1
+      ? response(200, { commit: { commit: { tree: { sha: 'tree-sha' } } } })
+      : response(200, { truncated: true, tree: [] });
+  });
+  await assert.rejects(client.listMarkdownPaths(), /too large.*complete file index/i);
+});
+
 test('GitHub API errors preserve status and actionable message', async () => {
   const client = new GitHubClient(config, async () => response(403, { message: 'Resource not accessible by personal access token' }));
   await assert.rejects(client.testConnection(), (error) => {

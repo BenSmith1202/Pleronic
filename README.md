@@ -10,7 +10,9 @@ Pleronic is a small, mobile-friendly progressive web app for capturing Markdown 
 4. Enter the repository owner, repository name, branch, inbox folder, and token. Select **Test connection** to check that the token can access the chosen branch, then save the settings.
 5. Capture a note. Notes are created as Markdown files named after their title in the configured inbox folder. Characters Obsidian cannot use in filenames are replaced with hyphens; use a unique title for each note in that folder. The default folder is `inbox`; GitHub creates it with the first saved note.
 
-The inbox lists and searches Markdown files in that folder. Select a note to read it in the app. Markdown previews and note views sanitize HTML before displaying it.
+The **Vault** view browses folders and Markdown files across the configured repository, with breadcrumbs and a folder filter. Select a note to read it in the app. Obsidian `[[wiki links]]`, aliases such as `[[Note|label]]`, and heading links such as `[[Note#Heading]]` are supported. Links are resolved against the vault's Markdown file index, preferring the current folder and then the vault root. Markdown previews and note views sanitize HTML before displaying it.
+
+This is a lightweight reader, not a full Obsidian renderer: plugin-generated views, Dataview, and embedded attachments are not rendered. GitHub's recursive file index has a size limit; if it is truncated, folder navigation still works, but wiki links cannot be resolved.
 
 ## Offline use
 
