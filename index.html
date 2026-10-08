@@ -71,6 +71,7 @@
       .workspace { min-width: 0; padding: 34px clamp(20px, 5vw, 58px) 70px; }
       .topbar { display: flex; align-items: center; justify-content: space-between; min-height: 38px; margin-bottom: 44px; }
       .date-label { color: var(--muted); font-size: 12px; }
+      .topbar-logo { display: block; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 10px; object-fit: cover; }
       .text-button { padding: 7px 0; border: 0; background: transparent; color: var(--green); font-size: 12px; font-weight: 650; }
       .text-button:hover { color: var(--blue); text-decoration: underline; }
       .view { display: none; }
@@ -279,6 +280,7 @@
       <main class="workspace">
         <div class="topbar">
           <span class="date-label" id="date-label"></span>
+          <img class="topbar-logo" src="icon-192.png" alt="Pleronic logo" width="34" height="34">
         </div>
 
         <section class="view active" id="view-capture" aria-labelledby="capture-heading">
