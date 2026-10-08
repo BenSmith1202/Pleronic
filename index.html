@@ -182,6 +182,19 @@
       .edit-conflict[hidden] { display: none; }
       .edit-conflict pre { max-height: 280px; overflow: auto; padding: 11px; border-radius: 6px; background: #f4ece1; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
       .edit-conflict .button-row { margin-top: 10px; }
+      .install-card { margin-top: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgb(249 252 251 / 78%); }
+      .install-card h2 { margin-bottom: 6px; font-family: inherit; font-size: 14px; font-weight: 650; letter-spacing: 0; }
+      .install-card p { margin-bottom: 12px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+      .install-card p:empty { display: none; }
+      .choice-dialog { width: min(440px, calc(100vw - 32px)); padding: 23px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 20px 70px rgb(20 40 38 / 25%); }
+      .choice-dialog::backdrop { background: rgb(26 45 43 / 42%); }
+      .choice-dialog h2 { margin-bottom: 8px; font-size: 23px; }
+      .choice-dialog p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+      .choice-dialog .button-row { justify-content: flex-end; }
+      .token-instructions { margin: 0 0 14px; padding-left: 21px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+      .token-instructions li + li { margin-top: 7px; }
+      .token-instructions strong, .choice-dialog p strong { color: var(--ink); }
+      .choice-dialog code { padding: 1px 4px; border-radius: 4px; background: #eaf1f1; font-size: .95em; }
       .toast { position: fixed; right: 20px; bottom: 20px; z-index: 5; max-width: min(440px, calc(100vw - 40px)); padding: 12px 16px; transform: translateY(12px); border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); color: var(--ink); font-size: 12px; line-height: 1.5; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; }
       .toast.active { transform: translateY(0); opacity: 1; }
       .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
@@ -204,6 +217,7 @@
         .vault-search-row input { flex: 1 1 100%; }
         .settings-grid { grid-template-columns: 1fr; }
         .settings-field.full { grid-column: auto; }
+        .choice-dialog { max-height: calc(100vh - 32px); overflow-y: auto; }
       }
 
       @media (min-width: 721px) {
@@ -342,9 +356,10 @@
                 <label class="field-label" for="gh-token">Fine-grained personal access token</label>
                 <input id="gh-token" name="token" type="password" placeholder="github_pat_…" autocomplete="new-password" required>
                 <p class="field-hint">Create a fine-grained token for this repository only, with Contents read and write access.</p>
+                <button class="text-button" id="github-token-help-button" type="button">How do I create a GitHub token?</button>
               </div>
               <div class="settings-field full">
-                <p class="settings-note">Your token is stored only in this browser on this device so the app can talk directly to GitHub. Use the app over HTTPS, don’t share this device, and revoke the token in GitHub if it’s lost. Pleronic has no server and never sends your token anywhere except GitHub’s API.</p>
+                <p class="settings-note">Your token is stored in this browser’s persistent local storage on this device (not temporary session storage). Use the app over HTTPS, don’t share this device, and revoke the token in GitHub if it’s lost.</p>
               </div>
             </div>
             <div class="button-row">
@@ -353,6 +368,11 @@
               <button class="button danger" id="disconnect" type="button">Disconnect</button>
             </div>
           </form>
+          <section class="install-card" aria-labelledby="install-heading">
+            <h2 id="install-heading">Install Pleronic</h2>
+            <p id="install-help" aria-live="polite">Add Pleronic to your home screen for a focused, app-like experience.</p>
+            <button class="button secondary" id="install-app" type="button">Install app</button>
+          </section>
         </section>
 
         <section class="view" id="view-reader" aria-labelledby="reader-title">
@@ -394,6 +414,31 @@
         <button class="nav-button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</button>
       </nav>
     </div>
+    <dialog class="choice-dialog" id="draft-exit-dialog" aria-labelledby="draft-exit-title" aria-describedby="draft-exit-description">
+      <h2 id="draft-exit-title">You have unsaved edits</h2>
+      <p id="draft-exit-description">Save them as a local draft to continue later, or discard the edits. A local draft is not sent to GitHub.</p>
+      <div class="button-row">
+        <button class="button secondary" id="stay-in-editor" type="button">Stay here</button>
+        <button class="button danger" id="discard-edit-draft" type="button">Discard edits</button>
+        <button class="button" id="save-edit-draft" type="button">Save draft</button>
+      </div>
+    </dialog>
+    <dialog class="choice-dialog" id="github-token-dialog" aria-labelledby="github-token-dialog-title">
+      <h2 id="github-token-dialog-title">Create a GitHub token</h2>
+      <p><a class="text-button" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Open GitHub fine-grained token settings ↗</a></p>
+      <ol class="token-instructions">
+        <li>On GitHub, open <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong>, then create a token.</li>
+        <li>Choose the account or organization that owns your vault, and restrict the token to <strong>only the repository that contains that vault</strong>.</li>
+        <li>Under repository permissions, set <strong>Contents</strong> to <strong>Read and write</strong>. GitHub’s required repository metadata permission can remain read-only.</li>
+        <li>Choose an expiration that suits you. GitHub shows the token only when it is created, so save it in a trusted password manager before leaving that page.</li>
+        <li>Paste the token into Pleronic’s Settings and save your vault settings.</li>
+      </ol>
+      <p><strong>Access scope:</strong> GitHub fine-grained tokens can be restricted to a repository, but not to a folder within it. Pleronic needs repository Contents access to browse, read, and edit vault notes.</p>
+      <p><strong>Where it is stored:</strong> Pleronic stores the token in this browser profile’s persistent <code>localStorage</code> on this device—not in temporary <code>sessionStorage</code>. Anyone who can use this browser profile may be able to use the token. Pleronic has no app server and sends the token directly to GitHub. Disconnecting removes the local settings; revoke the token in GitHub to invalidate it.</p>
+      <div class="button-row">
+        <button class="button" id="close-github-token-dialog" type="button">Got it</button>
+      </div>
+    </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script type="module" src="app.mjs"></script>
   </body>

@@ -65,6 +65,9 @@ const elements = {
   remoteNoteContent: $('#remote-note-content'),
   copyLocalDraftButton: $('#copy-local-draft'),
   acceptRemoteVersionButton: $('#accept-remote-version'),
+  draftExitDialog: $('#draft-exit-dialog'),
+  installButton: $('#install-app'),
+  installHelp: $('#install-help'),
   toast: $('#toast'),
   owner: $('#gh-owner'),
   repo: $('#gh-repo'),
@@ -94,6 +97,8 @@ let currentView = 'capture';
 let currentNote = null;
 let editDraftTimer;
 let editSaveInProgress = false;
+let draftExitPromise = null;
+let deferredInstallPrompt = null;
 let syncInProgress = false;
 let toastTimer;
 let draftTimer;
@@ -241,6 +246,78 @@ function scheduleEditDraftSave() {
   editDraftTimer = setTimeout(() => void persistEditDraft(), 250);
 }
 
+function askDraftExitChoice() {
+  if (draftExitPromise) return draftExitPromise;
+  draftExitPromise = new Promise((resolve) => {
+    const finish = (choice) => {
+      elements.draftExitDialog.close();
+      resolve(choice);
+    };
+    $('#save-edit-draft').onclick = () => finish('save');
+    $('#discard-edit-draft').onclick = () => finish('discard');
+    $('#stay-in-editor').onclick = () => finish('stay');
+    elements.draftExitDialog.oncancel = (event) => {
+      event.preventDefault();
+      finish('stay');
+    };
+    elements.draftExitDialog.onclose = () => {
+      elements.draftExitDialog.oncancel = null;
+      elements.draftExitDialog.onclose = null;
+      draftExitPromise = null;
+    };
+    elements.draftExitDialog.showModal();
+  });
+  return draftExitPromise;
+}
+
+async function discardCurrentEditDraft() {
+  if (!currentNote) return false;
+  const remote = currentNote.conflict;
+  try {
+    if (remote) await set(`note_cache:${currentNote.path}`, remote.content);
+    await del(editDraftKey(currentNote.path, currentNote.identity));
+  } catch (error) {
+    console.error('Could not discard the local edit draft:', error);
+    showToast(`The local edit draft could not be discarded: ${error.message}`);
+    return false;
+  }
+  if (remote) {
+    currentNote.content = remote.content;
+    currentNote.sha = remote.sha;
+    currentNote.offline = false;
+  }
+  currentNote.editing = false;
+  currentNote.conflict = null;
+  currentNote.draftContent = null;
+  elements.editContent.value = currentNote.content;
+  elements.editStatus.textContent = '';
+  updateEditControls();
+  if (currentView === 'reader') await renderVaultNote(currentNote.content, currentNote.path);
+  return true;
+}
+
+async function prepareToLeaveEditor() {
+  if (!currentNote?.editing) return true;
+  const savedDraftContent = currentNote.draftContent ?? currentNote.content;
+  if (elements.editContent.value === savedDraftContent) {
+    currentNote.editing = false;
+    updateEditControls();
+    return true;
+  }
+
+  clearTimeout(editDraftTimer);
+  const choice = await askDraftExitChoice();
+  if (choice === 'stay') {
+    elements.editStatus.textContent = 'Edits are not saved as a local draft yet.';
+    return false;
+  }
+  if (choice === 'discard') return discardCurrentEditDraft();
+  if (!await persistEditDraft()) return false;
+  currentNote.editing = false;
+  updateEditControls();
+  return true;
+}
+
 async function showEditConflict(remote) {
   currentNote.conflict = remote;
   elements.remoteNoteContent.textContent = remote.content;
@@ -341,11 +418,8 @@ function safeUrl(value, image) {
   }
 }
 
-async function switchView(view, draftAlreadySaved = false) {
-  if (!draftAlreadySaved && view !== currentView && currentNote?.editing && elements.editContent.value !== currentNote.draftContent) {
-    clearTimeout(editDraftTimer);
-    if (!await persistEditDraft()) return false;
-  }
+async function switchView(view, draftAlreadyHandled = false) {
+  if (!draftAlreadyHandled && view !== currentView && !await prepareToLeaveEditor()) return false;
   currentView = view;
   $$('.view').forEach((section) => section.classList.toggle('active', section.id === `view-${view}`));
   $$('[data-view]').forEach((button) => {
@@ -932,10 +1006,7 @@ async function syncQueuedNote(note, destination) {
 }
 
 async function openNote(note, heading = null) {
-  if (currentNote?.editing && elements.editContent.value !== currentNote.draftContent) {
-    clearTimeout(editDraftTimer);
-    if (!await persistEditDraft()) return;
-  }
+  if (!await prepareToLeaveEditor()) return;
   readerParentPath = note.path.split('/').slice(0, -1).join('/');
   const parentName = readerParentPath.split('/').at(-1);
   const backLabel = parentName ? `Back to ${parentName}` : 'Back to vault';
@@ -1044,30 +1115,7 @@ async function cancelEditingNote() {
     if (!confirm('Discard this local edit draft? This cannot be undone.')) return;
   }
   clearTimeout(editDraftTimer);
-  try {
-    await del(editDraftKey(currentNote.path, currentNote.identity));
-  } catch (error) {
-    console.error('Could not discard the local edit draft:', error);
-    showToast(`The local edit draft could not be discarded: ${error.message}`);
-    return;
-  }
-  if (currentNote.conflict) {
-    currentNote.content = currentNote.conflict.content;
-    currentNote.sha = currentNote.conflict.sha;
-    try {
-      await set(`note_cache:${currentNote.path}`, currentNote.content);
-    } catch (error) {
-      console.error('Could not cache the latest remote note after discarding the draft:', error);
-      showToast(`Draft discarded, but the latest note could not be cached: ${error.message}`);
-    }
-  }
-  currentNote.editing = false;
-  currentNote.conflict = null;
-  currentNote.draftContent = null;
-  elements.editContent.value = currentNote.content;
-  elements.editStatus.textContent = '';
-  updateEditControls();
-  await renderVaultNote(currentNote.content, currentNote.path);
+  await discardCurrentEditDraft();
 }
 
 async function saveEditedNote() {
@@ -1153,6 +1201,7 @@ async function acceptRemoteVersion() {
   const previousSha = currentNote.sha;
   currentNote.sha = remote.sha;
   currentNote.conflict = null;
+  currentNote.editing = true;
   if (!await persistEditDraft()) {
     currentNote.sha = previousSha;
     currentNote.conflict = remote;
@@ -1298,10 +1347,57 @@ function disconnect() {
   showToast('Vault disconnected. Notes already queued remain on this device.');
 }
 
+function isInstalled() {
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+function updateInstallButton() {
+  if (isInstalled()) {
+    elements.installButton.hidden = true;
+    elements.installHelp.textContent = 'Pleronic is installed on this device.';
+    return;
+  }
+  elements.installButton.hidden = false;
+  elements.installButton.textContent = deferredInstallPrompt ? 'Install app' : 'Install instructions';
+}
+
+async function installPleronic() {
+  if (isInstalled()) {
+    updateInstallButton();
+    return;
+  }
+  if (!deferredInstallPrompt) {
+    const isAppleMobile = /iPhone|iPad|iPod/i.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    elements.installHelp.textContent = isAppleMobile
+      ? 'In Safari, tap Share, then choose “Add to Home Screen”.'
+      : 'Open your browser menu and choose “Install app” or “Add to Home Screen”.';
+    return;
+  }
+
+  elements.installButton.disabled = true;
+  try {
+    const prompt = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+    await prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    elements.installHelp.textContent = outcome === 'accepted'
+      ? 'Pleronic is being installed on this device.'
+      : 'Installation was dismissed. You can try again from your browser menu.';
+  } catch (error) {
+    console.error('Could not open the Pleronic install prompt:', error);
+    showToast(`Could not start installation: ${error.message}`);
+  } finally {
+    elements.installButton.disabled = false;
+    updateInstallButton();
+  }
+}
+
 async function initialize() {
   const date = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
   $('#date-label').textContent = date.format(new Date());
   populateSettingsForm();
+  updateInstallButton();
   setConnection(navigator.onLine ? 'online' : 'offline', config ? 'Connected to GitHub' : 'Ready to connect');
 
   try {
@@ -1326,10 +1422,13 @@ async function initialize() {
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
 $('#top-settings').addEventListener('click', () => switchView('settings'));
 elements.readerBack.addEventListener('click', () => {
-  currentDirectory = readerParentPath;
-  elements.search.value = '';
-  clearVaultSearch();
-  void switchView('inbox');
+  void (async () => {
+    if (!await prepareToLeaveEditor()) return;
+    currentDirectory = readerParentPath;
+    elements.search.value = '';
+    clearVaultSearch();
+    await switchView('inbox', true);
+  })();
 });
 elements.editButton.addEventListener('click', startEditingNote);
 elements.cancelEditButton.addEventListener('click', () => void cancelEditingNote());
@@ -1374,6 +1473,9 @@ document.addEventListener('keydown', (event) => {
 });
 elements.vaultSearchForm.addEventListener('submit', searchVault);
 $('#settings-form').addEventListener('submit', saveSettings);
+elements.installButton.addEventListener('click', () => void installPleronic());
+$('#github-token-help-button').addEventListener('click', () => $('#github-token-dialog').showModal());
+$('#close-github-token-dialog').addEventListener('click', () => $('#github-token-dialog').close());
 $('#test-connection').addEventListener('click', testConnection);
 $('#disconnect').addEventListener('click', disconnect);
 elements.syncButton.addEventListener('click', syncQueue);
@@ -1449,6 +1551,16 @@ window.addEventListener('online', () => {
   void syncQueue();
 });
 window.addEventListener('offline', () => setConnection('offline', 'Offline · notes stay on this device'));
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  updateInstallButton();
+});
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  elements.installHelp.textContent = 'Pleronic is installed on this device.';
+  updateInstallButton();
+});
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js', { scope: './' })
     .catch((error) => console.error('Service worker registration failed:', error));

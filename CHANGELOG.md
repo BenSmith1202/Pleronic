@@ -8,6 +8,9 @@ Notable changes to Pleronic are documented here.
 
 - Added an editor for existing Markdown notes with device-local drafts, explicit conflict reconciliation, and SHA-guarded updates that preserve ordinary Git history.
 - Local edit drafts persist without repeated navigation prompts and are clearly marked; when a remote version changes, users can keep the local draft or switch to the remote version.
+- Added a Settings install button that opens the browser install prompt or displays Add to Home Screen instructions.
+- Added a save-draft, discard-edits, or stay choice when leaving an editor with changes not yet saved locally.
+- Added a Settings popup explaining fine-grained GitHub token creation, repository-level permission scope, safe backup, and local token storage.
 - Added Pleronic forest-themed artwork and install icons.
 - Added folder browsing with breadcrumbs and a Markdown note reader.
 - Added Obsidian wiki-link navigation for notes, aliases, and headings.

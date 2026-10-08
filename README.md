@@ -63,8 +63,8 @@ The published app must use HTTPS. When deploying from a project subpath, keep th
 
 Pleronic uses a GitHub fine-grained personal access token to read and write Markdown files in one repository.
 
-1. In GitHub, create a fine-grained token restricted to the repository containing your vault.
-2. Grant **Contents: Read and write** permission. GitHub's standard repository metadata permission is also needed to identify the repository.
+1. In GitHub, create a fine-grained token restricted to only the repository containing your vault.
+2. Grant **Contents: Read and write** permission. GitHub's standard repository metadata permission is also needed to identify the repository. GitHub tokens can be limited to a repository, but not to a specific folder inside it.
 3. In Pleronic, open **Settings** and enter:
    - **GitHub owner** — your username or organization
    - **Repository** — the repository name only, not its URL
@@ -74,7 +74,7 @@ Pleronic uses a GitHub fine-grained personal access token to read and write Mark
 4. Select **Test connection**, then save the settings.
 5. Open **Vault** to browse, read, and search your notes.
 
-The token must be able to read vault files for browsing, wiki links, and search, and write contents to save captured notes. Treat it like a password: create the narrowest token that works, and revoke it in GitHub if the device or browser profile is lost.
+The token must be able to read vault files for browsing, wiki links, and search, and write contents to save captured notes. Treat it like a password: create the narrowest token that works, and revoke it in GitHub if the device or browser profile is lost. GitHub displays a new token once, so save a copy in a trusted password manager.
 
 ## Using the app
 
@@ -111,7 +111,7 @@ Use **Search the whole vault** to look for words or phrases in note titles and c
 
 ### Install
 
-After opening the HTTPS-hosted app, use your browser's **Install app** or **Add to Home Screen** option. Installation support and wording vary by browser. If you installed an earlier version, update the app by opening it online; if the launcher still shows an old icon, remove the existing shortcut and install it again.
+Open **Settings** and choose **Install app** to use the browser's install prompt, when available. Otherwise, the button gives the browser-specific **Add to Home Screen** instructions. Installation requires an HTTPS-hosted app (localhost also works for development). If you installed an earlier version, update the app by opening it online; if the launcher still shows an old icon, remove the existing shortcut and install it again.
 
 ## Offline behavior
 
@@ -128,7 +128,7 @@ Recent-note history and drafts are stored in the browser/device that created the
 ## Privacy and security
 
 - Pleronic has no application server. The app sends GitHub API requests directly from your browser.
-- The access token is stored in that browser's `localStorage`. Anyone with access to the same browser profile may be able to use it.
+- The access token is stored in that browser profile's persistent `localStorage` on the device—not temporary `sessionStorage`. Anyone with access to the same browser profile may be able to use it.
 - Use Pleronic only over HTTPS outside local development. Do not use a shared or untrusted device for a token with write access.
 - Disconnecting removes the saved connection settings from the current browser. For a lost device or exposed token, revoke the token in GitHub as well.
 - Note text is sent to GitHub for reading, searching, and saving. Search can make many API requests because it scans notes individually.
