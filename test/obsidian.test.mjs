@@ -58,20 +58,30 @@ test('heading slugs are stable for punctuation, accents, and spacing', () => {
 test('frontmatter tags support inline arrays and nested tag names', () => {
   const result = extractObsidianFrontmatter('---\ntitle: Forest walk\ntags: [garden, "project/trees", \'#field-notes\']\n---\n\nA quiet path.');
   assert.deepEqual(result, {
-    markdown: '---\ntitle: Forest walk\n---\n\nA quiet path.',
-    tags: ['garden', 'project/trees', 'field-notes']
+    markdown: '\nA quiet path.',
+    tags: ['garden', 'project/trees', 'field-notes'],
+    frontmatter: 'title: Forest walk\ntags: [garden, "project/trees", \'#field-notes\']'
   });
 });
 
 test('frontmatter tags support YAML lists and ignore malformed tag values', () => {
   const result = extractObsidianFrontmatter('---\ntags:\n  - garden\n  - field/notes\n  - invalid tag\nother: value\n---\nNote body.');
   assert.deepEqual(result, {
-    markdown: '---\nother: value\n---\nNote body.',
-    tags: ['garden', 'field/notes']
+    markdown: 'Note body.',
+    tags: ['garden', 'field/notes'],
+    frontmatter: 'tags:\n  - garden\n  - field/notes\n  - invalid tag\nother: value'
   });
+});
+
+test('frontmatter is preserved separately from the note body, including nested properties', () => {
+  const markdown = '---\ntitle: Field journal\ndate: 2026-10-08\naliases:\n  - Journal\n  - Field notes\nmetadata:\n  status: active\n---\n\nThe note body.';
+  const result = extractObsidianFrontmatter(markdown);
+  assert.equal(result.frontmatter, 'title: Field journal\ndate: 2026-10-08\naliases:\n  - Journal\n  - Field notes\nmetadata:\n  status: active');
+  assert.equal(result.markdown, '\nThe note body.');
+  assert.deepEqual(result.tags, []);
 });
 
 test('notes without frontmatter remain unchanged', () => {
   const markdown = '# A note\n\nNo properties here.';
-  assert.deepEqual(extractObsidianFrontmatter(markdown), { markdown, tags: [] });
+  assert.deepEqual(extractObsidianFrontmatter(markdown), { markdown, tags: [], frontmatter: null });
 });

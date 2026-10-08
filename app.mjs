@@ -51,6 +51,8 @@ const elements = {
   readerTitle: $('#reader-title'),
   readerMeta: $('#reader-meta'),
   readerTags: $('#reader-tags'),
+  readerFrontmatter: $('#reader-frontmatter'),
+  readerFrontmatterContent: $('#reader-frontmatter-content'),
   readerBack: $('#reader-back'),
   readerBackLabel: $('#reader-back-label'),
   readerContent: $('#reader-content'),
@@ -1017,6 +1019,8 @@ async function openNote(note, heading = null) {
   elements.readerMeta.textContent = note.path;
   elements.readerTags.replaceChildren();
   elements.readerTags.hidden = true;
+  elements.readerFrontmatterContent.textContent = '';
+  elements.readerFrontmatter.hidden = true;
   elements.readerContent.textContent = 'Loading note…';
   elements.readerContent.hidden = false;
   elements.editStatus.textContent = '';
@@ -1237,6 +1241,8 @@ async function useRemoteVersion() {
 
 async function renderVaultNote(markdown, path) {
   const note = extractObsidianFrontmatter(markdown);
+  elements.readerFrontmatter.hidden = note.frontmatter === null;
+  elements.readerFrontmatterContent.textContent = note.frontmatter || '';
   let linkedMarkdown = note.markdown;
   try {
     linkedMarkdown = resolveWikiLinks(note.markdown, path, await getMarkdownPaths());

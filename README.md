@@ -103,7 +103,7 @@ Supported wiki-link forms include:
 
 Links are matched case-insensitively against the vault's Markdown file index. Pleronic checks the current note's folder first, then the vault root. Unresolved wiki links are displayed as plain text.
 
-Tags in note text and `tags` in YAML frontmatter are displayed as visual chips. They are decorative; they do not currently filter or link to other notes.
+YAML frontmatter is shown in a separate **Properties** panel above the note body, preserving the complete raw YAML—including properties Pleronic does not interpret. Recognized `tags` values and inline note tags are displayed as visual chips. Tags are decorative; they do not currently filter or link to other notes.
 
 ### Search
 
