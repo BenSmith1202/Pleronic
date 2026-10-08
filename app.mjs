@@ -1,5 +1,5 @@
 import { marked } from './vendor/marked.esm.js';
-import { del, get, set } from './vendor/idb-keyval.js';
+import { del, get, getMany, keys, set } from './vendor/idb-keyval.js';
 import { GitHubApiError, GitHubClient, isImagePath, noteFilename, validateConfig } from './github.mjs';
 import { extractObsidianFrontmatter, headingSlug, resolveImageEmbeds, resolveWikiLinks } from './obsidian.mjs';
 
@@ -48,6 +48,9 @@ const elements = {
   vaultSearchButton: $('#vault-search-button'),
   vaultSearchStatus: $('#vault-search-status'),
   recentNoteList: $('#recent-note-list'),
+  showMyDrafts: $('#show-my-drafts'),
+  myDraftsList: $('#my-drafts-list'),
+  saveEditDraftButton: $('#save-edit-draft-button'),
   readerTitle: $('#reader-title'),
   readerMeta: $('#reader-meta'),
   readerTags: $('#reader-tags'),
@@ -230,6 +233,8 @@ function updateEditControls() {
     ? 'Continue draft'
     : 'Edit note';
   elements.cancelEditButton.hidden = !currentNote?.editing;
+  elements.saveEditDraftButton.hidden = !currentNote?.editing;
+  elements.saveEditDraftButton.disabled = editSaveInProgress;
   elements.saveEditButton.hidden = !currentNote?.editing;
   elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict);
   elements.noteEditor.classList.toggle('active', Boolean(currentNote?.editing));
@@ -262,6 +267,21 @@ async function persistEditDraft() {
     showToast(`Your edit could not be saved locally: ${error.message}`);
     return false;
   }
+}
+
+async function saveEditDraftAndLeave() {
+  if (!currentNote?.editing || editSaveInProgress) return;
+  clearTimeout(editDraftTimer);
+  if (!await persistEditDraft()) return;
+  currentNote.editing = false;
+  updateEditControls();
+  currentDirectory = readerParentPath;
+  elements.myDraftsList.hidden = true;
+  elements.showMyDrafts.setAttribute('aria-expanded', 'false');
+  elements.search.value = '';
+  clearVaultSearch();
+  await switchView('inbox', true);
+  showToast('Draft saved on this device.');
 }
 
 function scheduleEditDraftSave() {
@@ -457,7 +477,10 @@ async function switchView(view, draftAlreadyHandled = false) {
     button.classList.toggle('active', active);
     button.setAttribute('aria-current', active ? 'page' : 'false');
   });
-  if (view === 'inbox') fetchInbox();
+  if (view === 'inbox') {
+    fetchInbox();
+    if (!elements.myDraftsList.hidden) runUiAction('Could not refresh your drafts.', loadMyDrafts);
+  }
   return true;
 }
 
@@ -555,6 +578,64 @@ async function refreshRecentNotes() {
     console.error('Could not load recently viewed notes:', error);
     showToast(`Could not load recent notes: ${error.message}`);
   }
+}
+
+async function loadMyDrafts() {
+  const identity = vaultIdentity();
+  if (!identity) {
+    elements.myDraftsList.replaceChildren();
+    const empty = document.createElement('p');
+    empty.className = 'vault-search-help';
+    empty.textContent = 'Connect a vault to see its saved edit drafts.';
+    elements.myDraftsList.append(empty);
+    elements.myDraftsList.hidden = false;
+    elements.showMyDrafts.setAttribute('aria-expanded', 'true');
+    return;
+  }
+
+  const prefix = `edit_draft:${identity}:`;
+  const storedKeys = await keys();
+  const draftKeys = storedKeys.filter((key) => typeof key === 'string' && key.startsWith(prefix));
+  const drafts = await getMany(draftKeys);
+  if (identity !== vaultIdentity()) return;
+
+  const entries = draftKeys.flatMap((key, index) => {
+    const path = key.slice(prefix.length);
+    const draft = drafts[index];
+    if (!path || !draft || typeof draft.content !== 'string' || typeof draft.baseSha !== 'string') return [];
+    return [{ path, draft }];
+  }).sort((left, right) => Date.parse(right.draft.updatedAt) - Date.parse(left.draft.updatedAt));
+
+  elements.myDraftsList.replaceChildren();
+  if (entries.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'vault-search-help';
+    empty.textContent = 'No saved edit drafts for this vault.';
+    elements.myDraftsList.append(empty);
+  } else {
+    for (const { path, draft } of entries) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'note-card recent-note-card';
+      button.dataset.draftPath = path;
+      const info = document.createElement('span');
+      info.className = 'note-info';
+      const title = document.createElement('span');
+      title.className = 'note-name';
+      title.textContent = formatNoteTitle(path.split('/').at(-1));
+      const meta = document.createElement('span');
+      meta.className = 'note-meta';
+      meta.textContent = path;
+      info.append(title, meta);
+      const savedAt = document.createElement('span');
+      savedAt.className = 'recent-when';
+      savedAt.textContent = formatRecentTime(draft.updatedAt);
+      button.append(info, savedAt);
+      elements.myDraftsList.append(button);
+    }
+  }
+  elements.myDraftsList.hidden = false;
+  elements.showMyDrafts.setAttribute('aria-expanded', 'true');
 }
 
 function renderInbox() {
@@ -1553,9 +1634,6 @@ async function initialize() {
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => {
   runUiAction('Could not change views.', () => switchView(button.dataset.view));
 }));
-$('#top-settings').addEventListener('click', () => {
-  runUiAction('Could not open settings.', () => switchView('settings'));
-});
 elements.readerBack.addEventListener('click', () => {
   runUiAction('Could not return to the vault.', async () => {
     if (!await prepareToLeaveEditor()) return;
@@ -1566,6 +1644,7 @@ elements.readerBack.addEventListener('click', () => {
   });
 });
 elements.editButton.addEventListener('click', startEditingNote);
+elements.saveEditDraftButton.addEventListener('click', () => runUiAction('Could not save the draft.', saveEditDraftAndLeave));
 elements.cancelEditButton.addEventListener('click', () => runUiAction('Could not cancel editing.', cancelEditingNote));
 elements.saveEditButton.addEventListener('click', () => runUiAction('Could not save the edit.', saveEditedNote));
 $('#close-image-viewer').addEventListener('click', () => elements.imageViewer.close());
@@ -1648,11 +1727,33 @@ elements.noteList.addEventListener('click', (event) => {
     || vaultSearchResults?.find((entry) => entry.path === button.dataset.notePath);
   if (note) runUiAction('Could not open that note.', () => openNote(note));
 });
+elements.breadcrumbs.addEventListener('click', (event) => {
+  const breadcrumb = event.target.closest('[data-directory-path]');
+  if (!breadcrumb) return;
+  currentDirectory = breadcrumb.dataset.directoryPath;
+  elements.search.value = '';
+  clearVaultSearch();
+  runUiAction('Could not open that folder.', fetchInbox);
+});
 elements.recentNoteList.addEventListener('click', (event) => {
   const button = event.target.closest('[data-note-path]');
   if (!button) return;
   const note = recentNotes.find((entry) => entry.path === button.dataset.notePath);
   if (note) runUiAction('Could not open that note.', () => openNote(note));
+});
+elements.showMyDrafts.addEventListener('click', () => {
+  if (!elements.myDraftsList.hidden) {
+    elements.myDraftsList.hidden = true;
+    elements.showMyDrafts.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  runUiAction('Could not load your drafts.', loadMyDrafts);
+});
+elements.myDraftsList.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-draft-path]');
+  if (!button) return;
+  const path = button.dataset.draftPath;
+  runUiAction('Could not open that draft.', () => openNote({ name: path.split('/').at(-1), path }));
 });
 elements.readerContent.addEventListener('click', (event) => {
   const image = event.target.closest('img[data-vault-path]');
