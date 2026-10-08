@@ -21,10 +21,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const elements = {
   connection: $('#connection-status'),
   connectionLabel: $('#connection-label'),
-  count: $$('.queue-count'),
-  banner: $('#queue-banner'),
-  bannerMessage: $('#queue-message'),
-  syncButton: $('#sync-queue'),
+  draftCount: $$('.draft-count'),
   title: $('#note-title'),
   content: $('#note-content'),
   form: $('#capture-form'),
@@ -78,6 +75,7 @@ const elements = {
   copyLocalDraftButton: $('#copy-local-draft'),
   acceptRemoteVersionButton: $('#accept-remote-version'),
   draftExitDialog: $('#draft-exit-dialog'),
+  settingsExitDialog: $('#settings-exit-dialog'),
   installButton: $('#install-app'),
   installHelp: $('#install-help'),
   aboutReadme: $('#about-pleronic-content'),
@@ -93,6 +91,8 @@ const elements = {
 };
 
 let config = loadConfig();
+let githubVerified = false;
+let savedSettingsSnapshot = '';
 let directoryEntries = [];
 let currentDirectory = '';
 let readerParentPath = '';
@@ -120,8 +120,9 @@ let editDraftTimer;
 let editSaveInProgress = false;
 let activeCaptureDraftId = null;
 let draftExitPromise = null;
+let settingsExitPromise = null;
 let deferredInstallPrompt = null;
-let syncInProgress = false;
+let draftCountRun = 0;
 let toastTimer;
 let draftTimer;
 
@@ -161,16 +162,100 @@ function setConnection(state, label) {
 }
 
 function updateOnlineControls() {
+  const connected = isGitHubReady();
   const offline = !navigator.onLine;
-  elements.syncButton.disabled = syncInProgress || offline;
-  elements.vaultSearchButton.disabled = offline || vaultSearchInProgress;
-  elements.refreshInboxButton.disabled = offline;
+  elements.vaultSearchButton.disabled = !connected || vaultSearchInProgress;
+  elements.refreshInboxButton.disabled = !connected;
   $('#test-connection').disabled = offline;
-  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict) || offline;
-  elements.syncButton.title = offline ? 'Connect to the internet to sync queued notes.' : '';
-  elements.vaultSearchButton.title = offline ? 'Connect to the internet to search the vault.' : '';
-  elements.refreshInboxButton.title = offline ? 'Connect to the internet to refresh the vault.' : '';
+  elements.saveButton.classList.toggle('unavailable-action', !connected);
+  elements.saveEditButton.classList.toggle('unavailable-action', !connected);
+  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict);
+  elements.saveButton.setAttribute('aria-disabled', String(!connected));
+  elements.saveEditButton.setAttribute('aria-disabled', String(!connected || editSaveInProgress || Boolean(currentNote?.conflict)));
+  $$('[data-view="inbox"]').forEach((button) => button.setAttribute('aria-disabled', String(!connected)));
+  elements.vaultSearchButton.title = offline ? 'Connect to the internet to search the vault.' : !config ? 'Connect a GitHub vault to search.' : '';
+  elements.refreshInboxButton.title = offline ? 'Connect to the internet to refresh the vault.' : !config ? 'Connect a GitHub vault to browse.' : '';
   $('#test-connection').title = offline ? 'Connect to the internet to test GitHub credentials.' : '';
+}
+
+function isGitHubReady() {
+  return navigator.onLine && Boolean(config) && githubVerified;
+}
+
+function markGitHubUnavailable(error, allowNotFound = false) {
+  if (error instanceof GitHubApiError
+    && ([409, 422].includes(error.status) || (allowNotFound && error.status === 404))) return;
+  githubVerified = false;
+  setConnection('error', 'GitHub connection needs attention');
+  updateOnlineControls();
+}
+
+async function refreshDraftCount() {
+  const run = ++draftCountRun;
+  const storedKeys = await keys();
+  const draftKeys = storedKeys.filter((key) => typeof key === 'string'
+    && (key.startsWith(CAPTURE_DRAFT_PREFIX) || key.startsWith('edit_draft:')));
+  const drafts = await getMany(draftKeys);
+  if (run !== draftCountRun) return;
+  const savedDraftCount = drafts.filter((draft, index) => draft && typeof draft.content === 'string'
+    && (draftKeys[index].startsWith(CAPTURE_DRAFT_PREFIX)
+      ? typeof draft.title === 'string'
+      : typeof draft.baseSha === 'string')).length;
+  const count = savedDraftCount;
+  for (const badge of elements.draftCount) {
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+    badge.setAttribute('aria-label', `${count} ${count === 1 ? 'draft' : 'drafts'}`);
+  }
+}
+
+function settingsFormSnapshot() {
+  return JSON.stringify({
+    owner: elements.owner.value,
+    repo: elements.repo.value,
+    branch: elements.branch.value,
+    folder: elements.folder.value,
+    token: elements.token.value
+  });
+}
+
+function settingsHaveChanges() {
+  return settingsFormSnapshot() !== savedSettingsSnapshot;
+}
+
+function askSettingsExitChoice() {
+  if (settingsExitPromise) return settingsExitPromise;
+  settingsExitPromise = new Promise((resolve) => {
+    const finish = (choice) => {
+      elements.settingsExitDialog.close();
+      resolve(choice);
+    };
+    $('#save-settings-exit').onclick = () => finish('save');
+    $('#discard-settings-exit').onclick = () => finish('discard');
+    $('#stay-settings').onclick = () => finish('stay');
+    elements.settingsExitDialog.oncancel = (event) => {
+      event.preventDefault();
+      finish('stay');
+    };
+    elements.settingsExitDialog.onclose = () => {
+      elements.settingsExitDialog.oncancel = null;
+      elements.settingsExitDialog.onclose = null;
+      settingsExitPromise = null;
+    };
+    elements.settingsExitDialog.showModal();
+  });
+  return settingsExitPromise;
+}
+
+async function prepareToLeaveSettings() {
+  if (currentView !== 'settings' || !settingsHaveChanges()) return true;
+  const choice = await askSettingsExitChoice();
+  if (choice === 'stay') return false;
+  if (choice === 'discard') {
+    populateSettingsForm();
+    return true;
+  }
+  return saveSettings();
 }
 
 async function promptForGitHubSetup(message) {
@@ -191,12 +276,14 @@ function getQueue() {
         throw new Error('A queued note is invalid. It has been kept on this device.');
       }
       changed = true;
-      const relativePath = note.path.split('/').filter(Boolean).pop();
+      const pathParts = note.path.split('/').filter(Boolean);
+      const relativePath = pathParts.pop();
       return {
         id: crypto.randomUUID(),
         relativePath,
         title: relativePath.replace(/\.md$/i, ''),
         content: note.content,
+        folder: pathParts.join('/'),
         createdAt: new Date().toISOString(),
         destination: null
       };
@@ -206,18 +293,26 @@ function getQueue() {
   });
 }
 
-function updateQueueStatus(queue) {
-  const count = queue.length;
-  for (const badge of elements.count) {
-    badge.textContent = String(count);
-    badge.hidden = count === 0;
+async function migrateQueueToDrafts() {
+  const queue = await getQueue();
+  if (queue.length === 0) return;
+  for (const note of queue) {
+    if (typeof note?.content !== 'string' || typeof note?.relativePath !== 'string') {
+      throw new Error('A queued note could not be converted to a draft and remains stored locally.');
+    }
+    const id = typeof note.id === 'string' ? note.id : crypto.randomUUID();
+    const title = typeof note.title === 'string' ? note.title : note.relativePath.replace(/\.md$/i, '');
+    const folder = typeof note.folder === 'string' ? note.folder : note.destination?.folder || '';
+    await set(`${CAPTURE_DRAFT_PREFIX}queued-${id}`, {
+      title,
+      content: note.content,
+      folder,
+      updatedAt: typeof note.createdAt === 'string' ? note.createdAt : new Date().toISOString()
+    });
   }
-  elements.banner.classList.toggle('active', count > 0);
-  elements.bannerMessage.textContent = count === 1
-    ? '1 note is waiting to sync from this device.'
-    : `${count} notes are waiting to sync from this device.`;
-  elements.syncButton.textContent = syncInProgress ? 'Syncing…' : 'Sync now';
-  updateOnlineControls();
+  await del(QUEUE_KEY);
+  await refreshDraftCount();
+  showToast(`${queue.length} queued ${queue.length === 1 ? 'note was' : 'notes were'} moved to Drafts. Review and save each when connected.`);
 }
 
 function updateVaultCard() {
@@ -252,7 +347,8 @@ function editDraftKey(path, identity = vaultIdentity()) {
 }
 
 function updateEditControls() {
-  const canEdit = Boolean(currentNote?.sha && currentNote.identity === vaultIdentity());
+  const canEdit = Boolean(currentNote?.sha
+    && (currentNote.identity === vaultIdentity() || (currentNote.offline && currentNote.draftContent !== null)));
   elements.readerActions.hidden = !currentNote;
   elements.editButton.hidden = !canEdit || currentNote.editing || Boolean(currentNote.conflict);
   elements.editButton.textContent = currentNote?.draftContent !== null && currentNote?.draftContent !== undefined
@@ -262,7 +358,7 @@ function updateEditControls() {
   elements.saveEditDraftButton.hidden = !currentNote?.editing;
   elements.saveEditDraftButton.disabled = editSaveInProgress;
   elements.saveEditButton.hidden = !currentNote?.editing;
-  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict) || !navigator.onLine;
+  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict);
   elements.noteEditor.classList.toggle('active', Boolean(currentNote?.editing));
   elements.readerContent.hidden = Boolean(currentNote?.editing);
   elements.editConflict.hidden = !currentNote?.conflict;
@@ -270,7 +366,7 @@ function updateEditControls() {
     const draftIsUnsynced = currentNote.draftContent !== null
       && currentNote.draftContent !== undefined
       && currentNote.draftContent !== currentNote.content;
-    elements.readerMeta.textContent = `${currentNote.path}${draftIsUnsynced ? ' · Local draft' : ''}${currentNote.offline ? ' · Offline copy' : ''}`;
+    elements.readerMeta.textContent = `${currentNote.path}${draftIsUnsynced ? ' · Local draft' : ''}${currentNote.offline ? ' · Local copy' : ''}`;
   }
 }
 
@@ -286,6 +382,7 @@ async function persistEditDraft() {
     currentNote.draftContent = draft.content;
     elements.editStatus.textContent = 'Local draft saved on this device. It has not been sent to GitHub.';
     updateEditControls();
+    await refreshDraftCount();
     return true;
   } catch (error) {
     console.error('Could not save the local edit draft:', error);
@@ -302,11 +399,9 @@ async function saveEditDraftAndLeave() {
   currentNote.editing = false;
   updateEditControls();
   currentDirectory = readerParentPath;
-  elements.myDraftsList.hidden = true;
-  elements.showMyDrafts.setAttribute('aria-expanded', 'false');
   elements.search.value = '';
   clearVaultSearch();
-  await switchView('inbox', true);
+  await switchView(isGitHubReady() && currentNote.identity === vaultIdentity() ? 'inbox' : 'drafts', true);
   showToast('Draft saved on this device.');
 }
 
@@ -351,6 +446,7 @@ async function discardCurrentEditDraft() {
     showToast(`The local edit draft could not be discarded: ${error.message}`);
     return false;
   }
+  await refreshDraftCount();
   if (remote) {
     currentNote.content = remote.content;
     currentNote.sha = remote.sha;
@@ -508,13 +604,17 @@ function safeUrl(value, image) {
 }
 
 async function switchView(view, draftAlreadyHandled = false) {
-  if (view === 'inbox' && !config) {
-    if (!draftAlreadyHandled && !await prepareToLeaveEditor()) return false;
-    elements.settingsPrompt.textContent = 'Enter your GitHub owner, repository, and fine-grained token below, then save settings. Use “Test connection” to verify access. Local capture and drafts remain available without connecting.';
-    elements.settingsPrompt.hidden = false;
-    return switchView('settings', true);
+  if (!draftAlreadyHandled && view !== currentView) {
+    if (!await prepareToLeaveEditor() || !await prepareToLeaveSettings()) return false;
   }
-  if (!draftAlreadyHandled && view !== currentView && !await prepareToLeaveEditor()) return false;
+  if (view === 'inbox' && !isGitHubReady()) {
+    showToast('You must be connected to GitHub to use the Vault. Check your settings and test the connection.');
+    if (!config || !githubVerified) {
+      elements.settingsPrompt.textContent = 'Enter your GitHub owner, repository, and fine-grained token below, then save settings. Use “Test connection” to verify access. Local capture and drafts remain available without connecting.';
+      elements.settingsPrompt.hidden = false;
+    }
+    return false;
+  }
   currentView = view;
   $$('.view').forEach((section) => section.classList.toggle('active', section.id === `view-${view}`));
   $$('[data-view]').forEach((button) => {
@@ -626,14 +726,10 @@ async function refreshRecentNotes() {
 }
 
 async function loadMyDrafts() {
-  const identity = vaultIdentity();
   const storedKeys = await keys();
-  // New-note captures are vault-independent; existing-note edits belong to the configured vault and branch.
-  const editPrefix = identity ? `edit_draft:${identity}:` : null;
   const draftKeys = storedKeys.filter((key) => typeof key === 'string'
-    && (key.startsWith(CAPTURE_DRAFT_PREFIX) || (editPrefix && key.startsWith(editPrefix))));
+    && (key.startsWith(CAPTURE_DRAFT_PREFIX) || key.startsWith('edit_draft:')));
   const drafts = await getMany(draftKeys);
-  if (identity !== vaultIdentity()) return;
 
   const entries = draftKeys.flatMap((key, index) => {
     const draft = drafts[index];
@@ -643,9 +739,13 @@ async function loadMyDrafts() {
       if (!id || typeof draft.title !== 'string') return [];
       return [{ kind: 'capture', id, draft }];
     }
-    const path = key.slice(editPrefix.length);
-    if (!path || typeof draft.baseSha !== 'string') return [];
-    return [{ kind: 'edit', path, draft }];
+    const prefix = 'edit_draft:';
+    const separator = key.indexOf(':', prefix.length);
+    if (separator < 0 || typeof draft.baseSha !== 'string') return [];
+    const identity = key.slice(prefix.length, separator);
+    const path = key.slice(separator + 1);
+    if (!identity || !path) return [];
+    return [{ kind: 'edit', identity, path, draft }];
   }).sort((left, right) => Date.parse(right.draft.updatedAt) - Date.parse(left.draft.updatedAt));
 
   elements.myDraftsList.replaceChildren();
@@ -664,7 +764,10 @@ async function loadMyDrafts() {
         : formatNoteTitle(entry.path.split('/').at(-1));
       button.dataset.draftKind = entry.kind;
       if (entry.kind === 'capture') button.dataset.captureDraftId = entry.id;
-      else button.dataset.draftPath = entry.path;
+      else {
+        button.dataset.draftPath = entry.path;
+        button.dataset.draftIdentity = entry.identity;
+      }
       const info = document.createElement('span');
       info.className = 'note-info';
       const title = document.createElement('span');
@@ -674,7 +777,7 @@ async function loadMyDrafts() {
       meta.className = 'note-meta';
       meta.textContent = entry.kind === 'capture'
         ? `New note${entry.draft.folder ? ` · ${entry.draft.folder}` : ''}`
-        : entry.path;
+        : entry.identity === vaultIdentity() ? entry.path : `${entry.path} · ${entry.identity}`;
       info.append(title, meta);
       const savedAt = document.createElement('span');
       savedAt.className = 'recent-when';
@@ -684,6 +787,7 @@ async function loadMyDrafts() {
       elements.myDraftsList.append(button);
     }
   }
+  await refreshDraftCount();
 }
 
 function renderInbox() {
@@ -704,7 +808,7 @@ function renderInbox() {
       : query ? 'No folders or notes match that filter.' : 'This folder is empty.';
     const detail = document.createElement('span');
     detail.textContent = !navigator.onLine
-      ? 'Reconnect to GitHub to load this folder. Your local drafts and queued notes are still available.'
+      ? 'Reconnect to GitHub to load this folder. Your local drafts remain available.'
       : vaultSearchResults !== null
       ? 'Try another search term.'
       : query ? 'Try another name.' : currentDirectory ? 'Try another folder or go back up a level.' : 'Capture a thought and it will land here.';
@@ -769,12 +873,8 @@ function clearVaultSearch() {
 
 async function searchVault(event) {
   event.preventDefault();
-  if (!navigator.onLine) {
-    showToast('You’re offline. Reconnect to search your GitHub vault.');
-    return;
-  }
-  if (!config) {
-    await promptForGitHubSetup('Connect a GitHub vault before searching. Enter the owner, repository, and a fine-grained token below.');
+  if (!isGitHubReady()) {
+    showToast('You must be connected to GitHub to search the Vault.');
     return;
   }
   const query = elements.vaultSearchInput.value.trim();
@@ -811,6 +911,7 @@ async function searchVault(event) {
   } catch (error) {
     if (run !== vaultSearchRun) return;
     console.error('Could not search the vault:', error);
+    markGitHubUnavailable(error);
     elements.vaultSearchStatus.textContent = `Search failed: ${error.message}`;
     const failure = document.createElement('div');
     failure.className = 'empty-state';
@@ -825,9 +926,9 @@ async function searchVault(event) {
 }
 
 async function fetchInbox() {
-  if (!config) {
+  if (!isGitHubReady()) {
     directoryEntries = [];
-    elements.inboxDescription.textContent = 'Connect a GitHub repository in Settings to browse your vault.';
+    elements.inboxDescription.textContent = 'Connect and test a GitHub repository in Settings to browse your vault.';
     elements.directoryHeading.textContent = 'Vault root';
     renderBreadcrumbs();
     renderInbox();
@@ -857,6 +958,7 @@ async function fetchInbox() {
     setConnection(navigator.onLine ? 'online' : 'offline', navigator.onLine ? 'Connected to GitHub' : 'Offline');
   } catch (error) {
     console.error('Could not load the vault inbox:', error);
+    markGitHubUnavailable(error, true);
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('strong');
@@ -1007,13 +1109,8 @@ async function openSaveFolderMenu() {
 
   elements.saveFolderSearch.value = '';
   renderSaveFolderOptions();
-  if (!config) {
-    elements.saveFolderStatus.textContent = `Connect a vault to load its folders. Your selected destination, ${saveFolderDisplay(selectedSaveFolder)}, will be used when you save.`;
-    elements.saveFolderSearch.focus();
-    return;
-  }
-  if (!navigator.onLine) {
-    elements.saveFolderStatus.textContent = 'Offline: choose from folders already available, or enter a destination when you reconnect.';
+  if (!isGitHubReady()) {
+    elements.saveFolderStatus.textContent = `Connect and test a vault to load folders. Your selected destination, ${saveFolderDisplay(selectedSaveFolder)}, is kept for later.`;
     elements.saveFolderSearch.focus();
     return;
   }
@@ -1055,6 +1152,7 @@ async function storeDraft() {
       await del(DRAFT_KEY);
       elements.draftStatus.textContent = 'Saved as a draft on this device';
     }
+    await refreshDraftCount();
   } catch (error) {
     console.error('Could not save the local draft:', error);
     elements.draftStatus.textContent = 'Draft could not be saved on this device';
@@ -1081,10 +1179,6 @@ async function saveCaptureDraft() {
       folder: selectedSaveFolder,
       updatedAt: new Date().toISOString()
     });
-    activeCaptureDraftId = null;
-    elements.title.value = '';
-    elements.content.value = '';
-    clearTimeout(draftTimer);
     let captureCleanupError = null;
     try {
       await del(DRAFT_KEY);
@@ -1092,6 +1186,11 @@ async function saveCaptureDraft() {
       console.error('Saved the capture draft, but could not clear the temporary capture:', error);
       captureCleanupError = error;
     }
+    activeCaptureDraftId = null;
+    elements.title.value = '';
+    elements.content.value = '';
+    clearTimeout(draftTimer);
+    await refreshDraftCount();
     elements.draftStatus.textContent = 'Saved as a draft on this device';
     updatePreview('', elements.preview);
     showToast(captureCleanupError
@@ -1149,8 +1248,8 @@ async function saveNote(event) {
       folder: selectedSaveFolder
     } : null
   };
-  if (navigator.onLine && !config) {
-    await promptForGitHubSetup('Connect a GitHub vault before saving this note online. Your note remains in the capture editor while you set up access.');
+  if (!isGitHubReady()) {
+    showToast('You must be connected to GitHub to save to your vault. Save this work as a draft instead.');
     return;
   }
   elements.saveButton.disabled = true;
@@ -1158,16 +1257,6 @@ async function saveNote(event) {
   elements.saveFolderToggle.disabled = true;
   elements.saveButton.textContent = 'Saving…';
   try {
-    if (!navigator.onLine || !config) {
-      await enqueueNote(note);
-      const draftRemoved = await removeActiveCaptureDraft();
-      const message = config
-        ? 'Saved on this device. It will sync when you’re back online.'
-        : 'Saved on this device. Connect a vault to sync it.';
-      showToast(draftRemoved ? message : `${message} The original draft remains in Drafts.`);
-      clearEditor();
-      return;
-    }
     await clientFromConfig().createNote(repositoryPath(note), note.content, note.title);
     invalidateMarkdownPathIndex();
     const draftRemoved = await removeActiveCaptureDraft();
@@ -1177,11 +1266,8 @@ async function saveNote(event) {
     clearEditor();
     if (currentView === 'inbox') fetchInbox();
   } catch (error) {
-    if (!config || !navigator.onLine) {
-      showToast(error.message);
-      return;
-    }
     console.error('Could not save the note to GitHub:', error);
+    markGitHubUnavailable(error);
     if (error instanceof GitHubApiError && error.status === 422) {
       try {
         const existing = await clientFromConfig().readNote(repositoryPath(note));
@@ -1200,16 +1286,22 @@ async function saveNote(event) {
         }
       }
     }
+    const id = activeCaptureDraftId || crypto.randomUUID();
     try {
-      await enqueueNote(note);
-      const draftRemoved = await removeActiveCaptureDraft();
-      const draftWarning = draftRemoved ? '' : ' The original draft remains in Drafts.';
-      showToast(`Saved on this device; GitHub could not save it: ${error.message}${draftWarning}`);
+      await set(`${CAPTURE_DRAFT_PREFIX}${id}`, {
+        title: note.title,
+        content: note.content,
+        folder: note.folder,
+        updatedAt: new Date().toISOString()
+      });
+      activeCaptureDraftId = id;
+      await del(DRAFT_KEY);
+      await refreshDraftCount();
+      showToast(`GitHub could not save the note: ${error.message}. The note is saved in Drafts instead.`);
       clearEditor();
-      setConnection('error', 'Note waiting to sync');
-    } catch (queueError) {
-      console.error('Could not queue the note locally:', queueError);
-      showToast(`GitHub could not save the note, and local storage failed: ${queueError.message}`);
+    } catch (draftError) {
+      console.error('GitHub could not save the note or preserve it as a draft:', draftError);
+      showToast(`GitHub could not save the note, and saving a draft also failed: ${draftError.message}`);
     }
   } finally {
     elements.saveButton.disabled = false;
@@ -1225,6 +1317,7 @@ async function removeActiveCaptureDraft() {
   try {
     await del(key);
     activeCaptureDraftId = null;
+    await refreshDraftCount();
     return true;
   } catch (error) {
     console.error('The note was saved, but its capture draft could not be removed:', error);
@@ -1237,13 +1330,6 @@ function repositoryPath(note, destination = note.destination || config) {
   return [note.folder ?? destination.folder, note.relativePath].filter(Boolean).join('/');
 }
 
-async function enqueueNote(note) {
-  const queue = await getQueue();
-  queue.push(note);
-  await set(QUEUE_KEY, queue);
-  updateQueueStatus(queue);
-}
-
 function clearEditor() {
   activeCaptureDraftId = null;
   elements.title.value = '';
@@ -1252,66 +1338,7 @@ function clearEditor() {
   void storeDraft();
 }
 
-async function syncQueue() {
-  if (syncInProgress) return;
-  if (!navigator.onLine) {
-    showToast('You’re offline. Your notes are safe on this device.');
-    return;
-  }
-  if (!config) {
-    await promptForGitHubSetup('Connect a GitHub vault before syncing queued notes. They will remain safely stored on this device.');
-    showToast('Queued notes are safe on this device until you connect a vault.');
-    return;
-  }
-
-  syncInProgress = true;
-  setConnection('syncing', 'Syncing notes…');
-  let queue;
-  try {
-    queue = await getQueue();
-    updateQueueStatus(queue);
-    while (queue.length > 0) {
-      const note = queue[0];
-      const destination = note.destination || config;
-      await syncQueuedNote(note, destination);
-      const remaining = queue.slice(1);
-      await set(QUEUE_KEY, remaining);
-      queue = remaining;
-      updateQueueStatus(queue);
-    }
-    showToast('All queued notes made it to your vault.');
-    setConnection('online', 'Connected to GitHub');
-  } catch (error) {
-    console.error('Queued notes could not be synced:', error);
-    if (queue) updateQueueStatus(queue);
-    setConnection('error', 'Sync needs attention');
-    showToast(`Sync stopped. Notes not confirmed as saved remain queued: ${error.message}`);
-  } finally {
-    syncInProgress = false;
-    if (queue) updateQueueStatus(queue);
-  }
-}
-
-async function syncQueuedNote(note, destination) {
-  const client = clientFromConfig({ ...destination, token: config.token });
-  const path = repositoryPath(note, destination);
-  try {
-    await client.createNote(path, note.content, note.title);
-    invalidateMarkdownPathIndex();
-  } catch (error) {
-    if (!(error instanceof GitHubApiError) || error.status !== 422) throw error;
-    const existing = await client.readNote(path);
-    if (existing !== note.content) {
-      throw new Error(`“${note.relativePath}” already exists. Rename or remove that file before syncing this queued note.`);
-    }
-  }
-}
-
-async function openNote(note, heading = null) {
-  if (!config) {
-    await promptForGitHubSetup('Connect a GitHub vault before opening notes.');
-    return;
-  }
+async function openNote(note, heading = null, noteIdentity = vaultIdentity()) {
   if (!await prepareToLeaveEditor()) return;
   readerParentPath = note.path.split('/').slice(0, -1).join('/');
   const parentName = readerParentPath.split('/').at(-1);
@@ -1335,7 +1362,7 @@ async function openNote(note, heading = null) {
     content: '',
     draftContent: null,
     sha: null,
-    identity: vaultIdentity(),
+    identity: noteIdentity,
     offline: false,
     editing: false,
     conflict: null
@@ -1343,7 +1370,9 @@ async function openNote(note, heading = null) {
   elements.editContent.value = '';
   updateEditControls();
   const cacheKey = `note_cache:${note.path}`;
+  const canLoadRemote = isGitHubReady() && noteIdentity === vaultIdentity();
   try {
+    if (!canLoadRemote) throw new Error('GitHub is not connected to this draft’s vault. Trying the saved local copy.');
     const remote = await clientFromConfig().readNoteWithMetadata(note.path);
     currentNote.content = remote.content;
     currentNote.sha = remote.sha;
@@ -1370,6 +1399,7 @@ async function openNote(note, heading = null) {
         else {
           await del(editDraftKey(note.path, currentNote.identity));
           currentNote.draftContent = null;
+          await refreshDraftCount();
         }
       }
     } catch (draftError) {
@@ -1378,26 +1408,41 @@ async function openNote(note, heading = null) {
     }
     updateEditControls();
   } catch (error) {
-    console.error('Could not load the note from GitHub:', error);
+    if (canLoadRemote) {
+      console.error('Could not load the note from GitHub:', error);
+      markGitHubUnavailable(error, true);
+    }
     try {
       const cached = await get(cacheKey);
-      if (typeof cached === 'string') {
-        currentNote.content = cached;
-        currentNote.offline = true;
-        await renderVaultNote(cached, note.path);
+      const draft = await get(editDraftKey(note.path, currentNote.identity));
+      const hasDraft = draft && typeof draft.content === 'string' && typeof draft.baseSha === 'string';
+      if (typeof cached === 'string' || hasDraft) {
+        currentNote.content = typeof cached === 'string' ? cached : draft.content;
+        currentNote.offline = !isGitHubReady() || noteIdentity !== vaultIdentity();
+        if (hasDraft) {
+          currentNote.sha = draft.baseSha;
+          currentNote.draftContent = draft.content;
+          currentNote.editing = true;
+          elements.editContent.value = draft.content;
+          elements.editStatus.textContent = 'Local edit draft. Changes stay in Drafts until you reconnect to its GitHub vault.';
+        }
+        await renderVaultNote(currentNote.content, note.path);
         void recordRecentNote(note);
-        elements.readerMeta.textContent = `${note.path} · Offline copy`;
-        showToast('Showing the last saved copy of this note.');
+        elements.readerMeta.textContent = `${note.path} · Local copy`;
+        showToast(hasDraft
+          ? 'Opened your local edit draft. It remains in Drafts until saved to GitHub.'
+          : 'Showing the last saved copy of this note.');
         updateEditControls();
       } else {
         elements.readerContent.textContent = error.message;
         setConnection('error', 'Could not open this note');
+        elements.readerActions.hidden = true;
       }
     } catch (cacheError) {
       console.error('Could not read the cached note:', cacheError);
       elements.readerContent.textContent = `${error.message} (Offline cache unavailable: ${cacheError.message})`;
+      elements.readerActions.hidden = true;
     }
-    elements.readerActions.hidden = true;
   }
   if (heading) {
     const target = elements.readerContent.querySelector(`#${CSS.escape(headingSlug(heading))}`);
@@ -1406,7 +1451,8 @@ async function openNote(note, heading = null) {
 }
 
 function startEditingNote() {
-  if (!currentNote?.sha || currentNote.identity !== vaultIdentity()) {
+  const canContinueLocalDraft = currentNote?.offline && currentNote.draftContent !== null;
+  if (!currentNote?.sha || (currentNote.identity !== vaultIdentity() && !canContinueLocalDraft)) {
     showToast('Reconnect to the same vault before editing this note.');
     return;
   }
@@ -1428,16 +1474,8 @@ async function cancelEditingNote() {
 
 async function saveEditedNote() {
   if (!currentNote?.editing || !currentNote.sha || currentNote.conflict || editSaveInProgress) return;
-  if (!navigator.onLine) {
-    showToast('You are offline. Your edit remains saved as a local draft on this device.');
-    return;
-  }
-  if (currentNote.identity !== vaultIdentity()) {
-    showToast('The connected vault changed. Reconnect to the original vault before saving this edit.');
-    return;
-  }
-  if (!config) {
-    await promptForGitHubSetup('Reconnect to your GitHub vault before saving this edit. Your local draft remains on this device.');
+  if (!isGitHubReady() || currentNote.identity !== vaultIdentity()) {
+    showToast('You must be connected to the original GitHub vault to publish this edit. The local draft is unchanged.');
     return;
   }
 
@@ -1471,6 +1509,7 @@ async function saveEditedNote() {
         showToast(`Could not verify the conflict; your local draft is preserved: ${refreshError.message}`);
       }
     } else {
+      markGitHubUnavailable(error);
       elements.editStatus.textContent = `Save failed. Your local draft is preserved: ${error.message}`;
       showToast(`The note was not confirmed as saved. Your local draft remains on this device: ${error.message}`);
     }
@@ -1492,6 +1531,11 @@ async function saveEditedNote() {
   } catch (error) {
     console.error('The note was saved, but local cleanup failed:', error);
     localCleanupError = error;
+  }
+  try {
+    await refreshDraftCount();
+  } catch (error) {
+    console.error('The note was saved, but the draft count could not be refreshed:', error);
   }
   try {
     await renderVaultNote(currentNote.content, currentNote.path);
@@ -1545,6 +1589,7 @@ async function useRemoteVersion() {
   elements.editStatus.textContent = '';
   updateEditControls();
   await renderVaultNote(remote.content, currentNote.path);
+  await refreshDraftCount();
 }
 
 function clearAttachmentImageUrls() {
@@ -1596,12 +1641,8 @@ async function loadEmbeddedImages(notePath) {
 }
 
 async function openVaultImage(path) {
-  if (!navigator.onLine) {
-    showToast('You’re offline. Reconnect to load images from GitHub.');
-    return;
-  }
-  if (!config) {
-    await promptForGitHubSetup('Connect a GitHub vault before opening attachments.');
+  if (!isGitHubReady()) {
+    showToast('You must be connected to GitHub to load vault attachments.');
     return;
   }
   const request = ++imageViewerRequest;
@@ -1626,6 +1667,7 @@ async function openVaultImage(path) {
   } catch (error) {
     if (request !== imageViewerRequest || !elements.imageViewer.open) return;
     console.error(`Could not open vault image ${path}:`, error);
+    markGitHubUnavailable(error, true);
     elements.imageViewerTitle.textContent = 'Could not load image';
     if (imageViewerUrl) URL.revokeObjectURL(imageViewerUrl);
     imageViewerUrl = null;
@@ -1639,20 +1681,22 @@ async function renderVaultNote(markdown, path) {
   clearAttachmentImageUrls();
   const note = extractObsidianFrontmatter(markdown);
   let linkedMarkdown = note.markdown;
-  try {
-    const [markdownPaths, imagePaths] = await Promise.all([getMarkdownPaths(), getImagePaths()]);
-    if (currentNote?.path !== path) return;
-    linkedMarkdown = resolveWikiLinks(note.markdown, path, markdownPaths);
-    linkedMarkdown = resolveImageEmbeds(linkedMarkdown, path, imagePaths);
-  } catch (error) {
-    console.error('Could not build the vault link index:', error);
-    showToast(`Note opened, but vault links or images could not be resolved: ${error.message}`);
+  if (isGitHubReady()) {
+    try {
+      const [markdownPaths, imagePaths] = await Promise.all([getMarkdownPaths(), getImagePaths()]);
+      if (currentNote?.path !== path) return;
+      linkedMarkdown = resolveWikiLinks(note.markdown, path, markdownPaths);
+      linkedMarkdown = resolveImageEmbeds(linkedMarkdown, path, imagePaths);
+    } catch (error) {
+      console.error('Could not build the vault link index:', error);
+      showToast(`Note opened, but vault links or images could not be resolved: ${error.message}`);
+    }
   }
   if (currentNote?.path !== path) return;
   elements.readerFrontmatter.hidden = note.frontmatter === null;
   elements.readerFrontmatterContent.textContent = note.frontmatter || '';
   updatePreview(linkedMarkdown, elements.readerContent);
-  await loadEmbeddedImages(path);
+  if (isGitHubReady()) await loadEmbeddedImages(path);
   if (currentNote?.path !== path) return;
   elements.readerTags.replaceChildren();
   for (const tagName of note.tags) {
@@ -1692,8 +1736,10 @@ function populateSettingsForm() {
   elements.branch.value = config?.branch || 'main';
   elements.folder.value = config?.folder ?? 'inbox';
   elements.token.value = config?.token || '';
+  savedSettingsSnapshot = settingsFormSnapshot();
   updateSaveFolderLabel();
   updateVaultCard();
+  updateOnlineControls();
 }
 
 function readSettingsForm() {
@@ -1706,19 +1752,30 @@ function readSettingsForm() {
   });
 }
 
-async function saveSettings(event) {
-  event.preventDefault();
+async function saveSettings(event = null) {
+  event?.preventDefault();
   try {
     const candidate = readSettingsForm();
+    const credentialsUnchanged = config
+      && candidate.owner === config.owner
+      && candidate.repo === config.repo
+      && candidate.branch === config.branch
+      && candidate.folder === config.folder
+      && candidate.token === config.token;
     localStorage.setItem(CONFIG_KEY, JSON.stringify(candidate));
     config = candidate;
+    githubVerified = Boolean(credentialsUnchanged && githubVerified);
     elements.settingsPrompt.hidden = true;
     resetVaultNavigation();
     populateSettingsForm();
-    setConnection(navigator.onLine ? 'online' : 'offline', navigator.onLine ? 'Settings saved' : 'Saved for when you’re online');
+    setConnection(navigator.onLine ? 'online' : 'offline', navigator.onLine
+      ? githubVerified ? 'Connected to GitHub' : 'Settings saved · test connection'
+      : 'Offline · settings saved');
     showToast('Vault settings saved on this device.');
+    return true;
   } catch (error) {
     showToast(error.message);
+    return false;
   }
 }
 
@@ -1735,6 +1792,7 @@ async function testConnection() {
     const branch = await new GitHubClient(candidate).testConnection();
     localStorage.setItem(CONFIG_KEY, JSON.stringify(candidate));
     config = candidate;
+    githubVerified = true;
     elements.settingsPrompt.hidden = true;
     resetVaultNavigation();
     populateSettingsForm();
@@ -1742,6 +1800,8 @@ async function testConnection() {
     showToast(`Connected to ${candidate.owner}/${candidate.repo} on ${candidate.branch}.`);
   } catch (error) {
     console.error('GitHub connection test failed:', error);
+    githubVerified = false;
+    updateOnlineControls();
     setConnection('error', error instanceof GitHubApiError && error.status === 401 ? 'Token was rejected' : 'Connection test failed');
     showToast(error.message);
   } finally {
@@ -1750,11 +1810,36 @@ async function testConnection() {
   }
 }
 
+async function verifySavedConnection() {
+  const candidate = config;
+  if (!candidate || !navigator.onLine) return false;
+  githubVerified = false;
+  updateOnlineControls();
+  try {
+    const branch = await clientFromConfig(candidate).testConnection();
+    if (candidate !== config || !navigator.onLine) return false;
+    githubVerified = true;
+    setConnection('online', `Connected · ${branch.name || candidate.branch}`);
+    updateOnlineControls();
+    if (currentView === 'inbox') await fetchInbox();
+    return true;
+  } catch (error) {
+    if (candidate !== config) return false;
+    console.error('Saved GitHub connection could not be verified:', error);
+    setConnection('error', 'GitHub connection needs attention');
+    elements.settingsPrompt.textContent = `GitHub connection could not be verified: ${error.message} Check the owner, repository, branch, and token in Settings, then test the connection.`;
+    elements.settingsPrompt.hidden = false;
+    updateOnlineControls();
+    return false;
+  }
+}
+
 function disconnect() {
-  if (!confirm('Remove the GitHub token and vault settings from this device? Queued notes stay here, but you’ll need to reconnect before they can sync.')) return;
+  if (!confirm('Remove the GitHub token and vault settings from this device? Local drafts stay here, but you’ll need to reconnect before using the Vault.')) return;
   localStorage.removeItem(CONFIG_KEY);
   config = null;
-  elements.settingsPrompt.textContent = 'Connect a GitHub vault to browse, search, or sync notes. Local drafts and queued notes remain available on this device.';
+  githubVerified = false;
+  elements.settingsPrompt.textContent = 'Connect and test a GitHub vault to browse and publish notes. Local drafts remain available on this device.';
   elements.settingsPrompt.hidden = false;
   recentNotes = [];
   resetVaultNavigation();
@@ -1762,7 +1847,7 @@ function disconnect() {
   populateSettingsForm();
   setConnection(navigator.onLine ? 'online' : 'offline', 'Not connected');
   updateOnlineControls();
-  showToast('Vault disconnected. Notes already queued remain on this device.');
+  showToast('Vault disconnected. Your local drafts remain on this device.');
 }
 
 function isInstalled() {
@@ -1816,18 +1901,23 @@ async function initialize() {
   $('#date-label').textContent = date.format(new Date());
   populateSettingsForm();
   updateInstallButton();
-  setConnection(navigator.onLine ? 'online' : 'offline', config ? 'Connected to GitHub' : 'GitHub setup needed');
+  setConnection(navigator.onLine ? 'online' : 'offline', config ? 'Verify GitHub connection' : 'GitHub setup needed');
   updateOnlineControls();
 
   try {
-    const [queue, draft] = await Promise.all([getQueue(), get(DRAFT_KEY)]);
-    updateQueueStatus(queue);
-    if (queue.length && navigator.onLine && config) runUiAction('Could not sync queued notes.', syncQueue);
+    try {
+      await migrateQueueToDrafts();
+    } catch (error) {
+      console.error('Could not move older queued notes into Drafts:', error);
+      showToast(`Older queued notes were kept locally but could not be moved to Drafts: ${error.message}`);
+    }
+    const draft = await get(DRAFT_KEY);
     if (draft && typeof draft === 'object') {
       elements.title.value = typeof draft.title === 'string' ? draft.title : '';
       elements.content.value = typeof draft.content === 'string' ? draft.content : '';
       if (draft.updatedAt) elements.draftStatus.textContent = `Draft saved ${new Date(draft.updatedAt).toLocaleString()}`;
     }
+    await refreshDraftCount();
   } catch (error) {
     console.error('Could not restore local notes:', error);
     showToast(`Could not restore local notes: ${error.message}`);
@@ -1837,6 +1927,7 @@ async function initialize() {
   updatePreview(elements.content.value, elements.preview);
   switchView('capture');
   void loadAboutReadme();
+  if (navigator.onLine && config) runUiAction('Could not verify GitHub connection.', verifySavedConnection);
 }
 
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => {
@@ -1845,6 +1936,10 @@ $$('[data-view]').forEach((button) => button.addEventListener('click', () => {
 elements.readerBack.addEventListener('click', () => {
   runUiAction('Could not return to the vault.', async () => {
     if (!await prepareToLeaveEditor()) return;
+    if (!isGitHubReady() || currentNote?.identity !== vaultIdentity()) {
+      await switchView('drafts', true);
+      return;
+    }
     currentDirectory = readerParentPath;
     elements.search.value = '';
     clearVaultSearch();
@@ -1910,7 +2005,6 @@ $('#github-token-help-button').addEventListener('click', () => $('#github-token-
 $('#close-github-token-dialog').addEventListener('click', () => $('#github-token-dialog').close());
 $('#test-connection').addEventListener('click', () => runUiAction('Could not test the GitHub connection.', testConnection));
 $('#disconnect').addEventListener('click', disconnect);
-elements.syncButton.addEventListener('click', () => runUiAction('Could not sync queued notes.', syncQueue));
 $('#refresh-inbox').addEventListener('click', () => runUiAction('Could not refresh the vault.', fetchInbox));
 elements.search.addEventListener('input', () => {
   clearVaultSearch();
@@ -1958,7 +2052,7 @@ elements.myDraftsList.addEventListener('click', (event) => {
     return;
   }
   const path = button.dataset.draftPath;
-  runUiAction('Could not open that draft.', () => openNote({ name: path.split('/').at(-1), path }));
+  runUiAction('Could not open that draft.', () => openNote({ name: path.split('/').at(-1), path }, null, button.dataset.draftIdentity));
 });
 elements.readerContent.addEventListener('click', (event) => {
   const image = event.target.closest('img[data-vault-path]');
@@ -2007,13 +2101,14 @@ for (const field of [elements.title, elements.content]) {
 }
 
 window.addEventListener('online', () => {
-  setConnection('online', config ? 'Connected to GitHub' : 'GitHub setup needed');
+  githubVerified = false;
+  setConnection('online', config ? 'Verifying GitHub connection…' : 'GitHub setup needed');
   updateOnlineControls();
-  if (config) runUiAction('Could not sync queued notes.', syncQueue);
-  if (currentView === 'inbox' && config) runUiAction('Could not refresh the vault.', fetchInbox);
+  if (config) runUiAction('Could not verify GitHub connection.', verifySavedConnection);
 });
 window.addEventListener('offline', () => {
   setConnection('offline', 'Offline · notes stay on this device');
+  githubVerified = false;
   updateOnlineControls();
   if (currentView === 'inbox' && config) runUiAction('Could not update the offline vault view.', fetchInbox);
 });

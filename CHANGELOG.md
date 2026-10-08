@@ -6,7 +6,8 @@ Notable changes to Pleronic are documented here.
 
 ### Added
 
-- Disable GitHub-only actions while offline, guide unconfigured users to GitHub settings, and make capture-draft and GitHub-publish actions clearer.
+- Require a verified GitHub connection for vault browsing and publishing, save offline work only as drafts, and convert older queued notes into drafts.
+- Prompt before leaving Settings with unsaved changes and show the saved-draft count in the Drafts navigation tab.
 - Preview AVIF, GIF, JPEG, PNG, and WebP attachments from vault folders and Markdown/Obsidian image embeds, with a 20 MB per-image limit.
 - Added an editor for existing Markdown notes with device-local drafts, explicit conflict reconciliation, and SHA-guarded updates that preserve ordinary Git history.
 - Added an explicit **Save draft** action and a dedicated **Drafts** navigation page for saved edits to existing notes.
@@ -24,7 +25,7 @@ Notable changes to Pleronic are documented here.
 - Added whole-vault Markdown search with progress and matching-line snippets.
 - Added a per-vault list of the five most recently viewed notes.
 - Added a searchable destination-folder picker for captured notes.
-- Added offline draft saving and a queue for notes waiting to sync.
+- Migrated legacy queued notes into Drafts so they are never uploaded automatically.
 - Added documentation for setup, GitHub Pages deployment, privacy, and limitations.
 
 ### Changed

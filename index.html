@@ -48,7 +48,9 @@
       .nav-button:hover { background: #dce9e8; }
       .nav-button.active { background: var(--green-wash); color: var(--green-dark); font-weight: 650; }
       .nav-icon { display: inline-grid; width: 20px; place-items: center; font-size: 16px; }
-      .queue-count { min-width: 21px; margin-left: auto; padding: 2px 6px; border-radius: 99px; background: #e5edf0; color: #446878; font-size: 11px; text-align: center; }
+      .draft-count { min-width: 21px; margin-left: auto; padding: 2px 6px; border-radius: 99px; background: #e5edf0; color: #446878; font-size: 11px; text-align: center; }
+      .nav-button[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
+      .unavailable-action { cursor: not-allowed; opacity: .55; }
       .sidebar-bottom { margin-top: auto; }
       .vault-card { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: rgb(249 252 251 / 82%); }
       .vault-eyebrow { margin-bottom: 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
@@ -133,9 +135,6 @@
       .button.secondary:hover { background: #edf4f3; }
       .button.danger { border-color: #ead7d6; background: #fff9f8; color: var(--red); }
       .button-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
-      .queue-banner { display: none; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 19px; padding: 13px 15px; border: 1px solid #cddfe1; border-radius: 10px; background: #e5eff0; color: #3a6270; font-size: 12px; }
-      .queue-banner.active { display: flex; }
-      .queue-banner button { flex: 0 0 auto; padding: 7px 10px; border: 1px solid #b9d0d4; border-radius: 7px; background: transparent; color: inherit; font-size: 11px; font-weight: 650; }
       .inbox-toolbar { display: flex; gap: 10px; margin: 24px 0 16px; }
       .inbox-toolbar input { min-width: 0; }
       .inbox-toolbar .button { flex: 0 0 auto; }
@@ -231,8 +230,7 @@
         .mobile-nav { position: fixed; right: 0; bottom: 0; left: 0; z-index: 3; display: grid !important; grid-template-columns: repeat(4, 1fr); padding: 8px 9px max(8px, env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: rgb(249 252 251 / 96%); backdrop-filter: blur(12px); }
         .mobile-nav .nav-button { flex-direction: column; justify-content: center; gap: 3px; padding: 5px; font-size: 10px; }
         .mobile-nav .nav-icon { font-size: 17px; }
-        .mobile-nav .queue-count { position: absolute; margin: -27px 0 0 29px; }
-        .queue-banner { align-items: flex-start; }
+        .mobile-nav .draft-count { position: absolute; margin: -27px 0 0 29px; }
         .editor-footer { align-items: flex-start; flex-wrap: wrap; }
         .save-control { margin-left: auto; }
         .inbox-toolbar { flex-wrap: wrap; }
@@ -262,8 +260,8 @@
         <p class="nav-label">Workspace</p>
         <nav class="nav-list" aria-label="Workspace">
           <button class="nav-button active" data-view="capture"><span class="nav-icon" aria-hidden="true">＋</span>Capture</button>
-          <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Vault<span class="queue-count" id="queue-count" hidden>0</span></button>
-          <button class="nav-button" data-view="drafts"><span class="nav-icon" aria-hidden="true">✎</span>Drafts</button>
+          <button class="nav-button" data-view="inbox" aria-disabled="true"><span class="nav-icon" aria-hidden="true">▤</span>Vault</button>
+          <button class="nav-button" data-view="drafts"><span class="nav-icon" aria-hidden="true">✎</span>Drafts<span class="draft-count" hidden>0</span></button>
           <button class="nav-button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</button>
         </nav>
         <div class="sidebar-bottom">
@@ -283,15 +281,10 @@
           <span class="date-label" id="date-label"></span>
         </div>
 
-        <div class="queue-banner" id="queue-banner" role="status">
-          <span id="queue-message"></span>
-          <button type="button" id="sync-queue">Sync now</button>
-        </div>
-
         <section class="view active" id="view-capture" aria-labelledby="capture-heading">
           <p class="eyebrow">A thought worth keeping</p>
           <h1 id="capture-heading">Catch it before it goes.</h1>
-          <p class="lead">Save straight to GitHub when online, or queue a note on this device to sync later. Drafts stay local until you choose to save them.</p>
+          <p class="lead">Save to your vault when connected, or keep unfinished work safely in Drafts until you’re ready.</p>
           <form class="editor-card" id="capture-form">
             <label class="sr-only" for="note-title">Note title</label>
             <input class="title-input" id="note-title" name="title" type="text" maxlength="120" placeholder="Give this note a name…" autocomplete="off">
@@ -458,8 +451,8 @@
 
       <nav class="mobile-nav" aria-label="Main navigation">
         <button class="nav-button active" data-view="capture"><span class="nav-icon" aria-hidden="true">＋</span>Capture</button>
-        <button class="nav-button" data-view="inbox"><span class="nav-icon" aria-hidden="true">▤</span>Vault<span class="queue-count" id="mobile-queue-count" hidden>0</span></button>
-        <button class="nav-button" data-view="drafts"><span class="nav-icon" aria-hidden="true">✎</span>Drafts</button>
+        <button class="nav-button" data-view="inbox" aria-disabled="true"><span class="nav-icon" aria-hidden="true">▤</span>Vault</button>
+        <button class="nav-button" data-view="drafts"><span class="nav-icon" aria-hidden="true">✎</span>Drafts<span class="draft-count" hidden>0</span></button>
         <button class="nav-button" data-view="settings"><span class="nav-icon" aria-hidden="true">⚙</span>Settings</button>
       </nav>
     </div>
@@ -470,6 +463,15 @@
         <button class="button secondary" id="stay-in-editor" type="button">Stay here</button>
         <button class="button danger" id="discard-edit-draft" type="button">Discard edits</button>
         <button class="button" id="save-edit-draft" type="button">Save draft</button>
+      </div>
+    </dialog>
+    <dialog class="choice-dialog" id="settings-exit-dialog" aria-labelledby="settings-exit-title" aria-describedby="settings-exit-description">
+      <h2 id="settings-exit-title">Save settings changes?</h2>
+      <p id="settings-exit-description">Your GitHub settings have changed. Save them on this device before leaving, discard the changes, or stay on this page.</p>
+      <div class="button-row">
+        <button class="button secondary" id="stay-settings" type="button">Stay here</button>
+        <button class="button danger" id="discard-settings-exit" type="button">Discard changes</button>
+        <button class="button" id="save-settings-exit" type="button">Save settings</button>
       </div>
     </dialog>
     <dialog class="choice-dialog" id="github-token-dialog" aria-labelledby="github-token-dialog-title">

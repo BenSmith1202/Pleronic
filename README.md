@@ -19,7 +19,7 @@ Pleronic is a static progressive web app (PWA) for sending Markdown notes to a G
 
 - **Capture notes** with a title and Markdown body. Notes are saved as `<title>.md` in your configured default folder.
 - **Choose a destination folder** from the searchable folder picker beside the save button. The Settings folder is the default, not a restriction; a missing destination folder is created when GitHub saves the first note there.
-- **Keep writing offline.** Explicit capture drafts and existing-note edit drafts are saved on the device, and notes waiting for a connection are queued for sync.
+- **Keep writing offline.** Capture drafts and existing-note edit drafts stay on this device until you are connected and ready to publish.
 - **Browse the vault** by folder, with breadcrumbs and a quick filter for the current folder.
 - **Search the whole vault** by note title or Markdown content, with matching-line snippets and progress.
 - **Pick up where you left off.** The five most recently viewed notes are kept locally for each vault and branch.
@@ -85,17 +85,17 @@ Give your note a title, write in Markdown, and select **Save to vault**. The tit
 
 The folder shown below the save button is the current destination. Open the adjacent arrow to search and select any folder in the vault, or choose **Vault root**. The Settings default is included even if it has not been created yet; GitHub creates that folder when the note is saved.
 
-If GitHub is unavailable, Pleronic can save the note to a local sync queue and try again when you reconnect. Review the sync status and use **Sync now** if needed.
+Pleronic requires a verified GitHub connection to save a note to the vault. If offline or disconnected, choose **Save as draft**; the note remains local until you reopen it and save while connected.
 
 ### Browse and read
 
 Open **Vault** to browse from the repository root. Select a folder to enter it, use the breadcrumbs to move to an ancestor, and open a Markdown file to read it. The reader's back link returns to the note's containing folder.
 
-Select **Save as draft** on the capture page to save a new note locally for later. The **Drafts** navigation tab lists those capture drafts alongside saved edits to existing notes; select a capture draft to continue writing or an edit draft to reopen its note. Capture drafts are removed from the list when saved to GitHub or moved to the sync queue.
+Select **Save as draft** on the capture page to save a new note locally for later. The **Drafts** navigation tab lists those capture drafts alongside saved edits to existing notes; its badge shows the number of saved drafts. Select a capture draft to continue writing or an edit draft to reopen its note. Capture drafts are removed from the list when saved to GitHub.
 
 Typing on the capture page also keeps a temporary local recovery draft. Select **Save as draft** to make a separate, named entry in **Drafts** that you can reopen later. Capture drafts include the currently selected destination folder.
 
-Select **Edit note** to modify an existing file. Pleronic saves an edit draft on this device as you type; it is not sent to GitHub until you select **Save changes to GitHub**, which commits the update to your repository. Select **Save draft** to save locally and return to the containing folder. Leaving the editor prompts you to save the draft or discard edits. The note is marked **Local draft** until it is saved to GitHub or discarded. Saving to GitHub requires a connection. The update includes the version SHA from when the note was read, so GitHub rejects it if another change has landed in the meantime. When that happens, Pleronic shows the newer remote version and offers **Keep my draft** or **Use remote version**. Keeping the draft allows a later save to replace the newer remote text; choosing the remote version discards the local draft. You can copy your draft from the conflict panel. Edits are never silently queued for later upload.
+Select **Edit note** to modify an existing file. Pleronic saves an edit draft on this device as you type; it is not sent to GitHub until you select **Save to vault**, which commits the update to your repository. Select **Save draft** to save locally and return to the containing folder. Leaving the editor prompts you to save the draft or discard edits. The note is marked **Local draft** until it is saved to GitHub or discarded. Saving to GitHub requires a connection. The update includes the version SHA from when the note was read, so GitHub rejects it if another change has landed in the meantime. When that happens, Pleronic shows the newer remote version and offers **Keep my draft** or **Use remote version**. Keeping the draft allows a later save to replace the newer remote text; choosing the remote version discards the local draft. You can copy your draft from the conflict panel. Edits are never silently queued for later upload.
 
 Supported wiki-link forms include:
 
@@ -124,17 +124,16 @@ At the bottom of **Settings**, expand **About Pleronic** to read this README ins
 
 After the app shell has loaded, the service worker caches the interface and its local modules. While offline:
 
-- Drafts and notes waiting to sync remain on this device.
-- Capture drafts and existing-note edit drafts are stored in this browser and do not sync between devices. Capture drafts must be opened and saved to GitHub or moved to the sync queue manually.
+- Capture drafts and existing-note edit drafts are stored in this browser and do not sync between devices. Reopen drafts and save them to GitHub when connected.
 - Existing-note edit drafts are never automatically uploaded later. Reopen the note while online to compare a saved draft with GitHub.
-- When offline, **Save to vault** stores a new note in the local sync queue; it does not reach GitHub until a connection and configured credentials are available. Pleronic retries queued note sync when the connection returns and a vault is configured.
+- Saving to the vault is unavailable until Pleronic has verified a GitHub connection. Offline or unverified work must be explicitly saved as a draft; it is never queued for automatic upload.
 - Previously opened notes may be available from their saved local copy.
-- Search, refresh, folder navigation, attachment opening, connection testing, edit publishing, and queue sync require a connection. Relevant controls are disabled while offline; notes with a saved local copy can still be opened.
+- The Vault tab and vault publishing require a successful GitHub connection test. Search, refresh, folder navigation, attachment opening, and connection testing are unavailable offline.
 - Page navigations can use the cached app shell. Missing scripts or other assets are not replaced by the shell, so they fail as asset requests instead of producing misleading HTML responses.
 
 Recent-note history and drafts are stored in the browser/device that created them. They are not synced between devices. The service worker also caches this README so the **About Pleronic** section can work offline after the app has been opened online.
 
-If you open **Vault**, start a vault search, save directly to GitHub, or sync queued notes before connecting, Pleronic directs you to **Settings** to enter your GitHub owner, repository, and fine-grained token. Local capture and drafts remain available without GitHub credentials.
+If you open **Vault**, start a vault search, or try to publish before connecting, Pleronic explains that a verified connection is required. Enter your GitHub owner, repository, and fine-grained token in **Settings**, then choose **Test connection**. Local capture and drafts remain available without GitHub credentials.
 
 ## Privacy and security
 
@@ -163,7 +162,7 @@ Pleronic is plain HTML, CSS, and JavaScript modules; there is no compile or buil
 ### Project structure
 
 - `index.html` contains the responsive interface, navigation, dialogs, and styles.
-- `app.mjs` wires UI interactions, local drafts and queues, rendering, and navigation.
+- `app.mjs` wires UI interactions, local drafts, rendering, and navigation.
 - `github.mjs` validates settings and implements GitHub API access, note updates, image reads, and vault search.
 - `obsidian.mjs` handles Obsidian frontmatter, wiki links, image embeds, and heading slugs.
 - `sw.js` caches the offline app shell and static assets. GitHub API requests are not cached.
