@@ -47,6 +47,10 @@ test('config rejects path traversal in the inbox folder', () => {
   assert.throws(() => validateConfig({ ...config, folder: 'notes/../private' }), /valid repository path/);
 });
 
+test('config tells users to enter the repository name instead of its URL', () => {
+  assert.throws(() => validateConfig({ ...config, repo: 'https://github.com/octo-user/my-vault' }), /repository name only, not its URL/);
+});
+
 test('base64 helpers round-trip Unicode note content', () => {
   const note = 'Café — こんにちは 🌱';
   assert.equal(decodeUtf8Base64(encodeUtf8Base64(note)), note);

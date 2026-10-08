@@ -17,7 +17,10 @@ export function validateConfig(config) {
   }
 
   const branch = typeof config.branch === 'string' && config.branch.trim() ? config.branch.trim() : 'main';
-  if ([config.owner, config.repo, branch].some((value) => /[/\\\u0000-\u001f]/.test(value))) {
+  if (/[\/\\\u0000-\u001f]/.test(config.repo)) {
+    throw new Error('Enter the repository name only, not its URL.');
+  }
+  if ([config.owner, branch].some((value) => /[/\\\u0000-\u001f]/.test(value))) {
     throw new Error('Owner, repository, and branch must not contain slashes or control characters.');
   }
 

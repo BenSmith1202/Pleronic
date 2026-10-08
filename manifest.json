@@ -3,8 +3,8 @@
   "short_name": "Fieldnotes",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#f5f4f0",
-  "theme_color": "#f5f4f0",
+  "background_color": "#eaf1f2",
+  "theme_color": "#eaf1f2",
   "orientation": "portrait",
   "description": "Capture notes straight to your GitHub-backed Obsidian vault.",
   "icons": [

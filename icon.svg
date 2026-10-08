@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Fieldnotes app icon">
-  <rect width="512" height="512" rx="118" fill="#3d604b"/>
-  <path d="M314 116h-51c-78 0-117 43-117 120v37h-52v55h52v113h67V328h82v-55h-82v-37c0-45 18-66 57-66h44z" fill="#fffefa"/>
-  <circle cx="363" cy="150" r="25" fill="#dbe7da"/>
+  <rect width="512" height="512" rx="118" fill="#315f52"/>
+  <path d="M314 116h-51c-78 0-117 43-117 120v37h-52v55h52v113h67V328h82v-55h-82v-37c0-45 18-66 57-66h44z" fill="#f9fcfb"/>
+  <circle cx="363" cy="150" r="31" fill="#78a9b5"/>
+  <path d="M363 130c-12 17-17 25-17 32a17 17 0 0 0 34 0c0-7-5-15-17-32z" fill="#dcebef"/>
 </svg>
