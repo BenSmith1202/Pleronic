@@ -114,7 +114,9 @@
       .save-hint { color: var(--muted); font-size: 11px; line-height: 1.5; }
       .save-control { position: relative; display: grid; justify-items: end; gap: 6px; }
       .save-actions { display: flex; }
-      .save-actions .button { border-radius: 8px 0 0 8px; }
+      .save-actions #save-note { border-radius: 8px 0 0 8px; }
+      .save-actions #save-capture-draft { border-color: var(--line); border-radius: 0; background: var(--surface); color: var(--ink); }
+      .save-actions #save-capture-draft:hover { background: #edf4f3; }
       .save-actions .save-folder-toggle { min-width: 42px; padding: 9px 11px; border-left-color: rgb(255 255 255 / 28%); border-radius: 0 8px 8px 0; }
       .save-folder-label { max-width: min(320px, 75vw); overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
       .save-folder-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 4; width: min(320px, calc(100vw - 56px)); padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); box-shadow: var(--shadow); }
@@ -193,6 +195,13 @@
       .install-card h2 { margin-bottom: 6px; font-family: inherit; font-size: 14px; font-weight: 650; letter-spacing: 0; }
       .install-card p { margin-bottom: 12px; color: var(--muted); font-size: 11px; line-height: 1.55; }
       .install-card p:empty { display: none; }
+      .about-card { margin-top: 18px; padding: 0 16px; border: 1px solid var(--line); border-radius: 12px; background: rgb(249 252 251 / 78%); }
+      .about-card summary { padding: 15px 0; color: var(--green-dark); cursor: pointer; font-size: 14px; font-weight: 650; }
+      .about-content { padding: 0 0 18px; font-size: 13px; line-height: 1.65; }
+      .about-content h1 { font-size: 28px; }
+      .about-content h2 { font-size: 22px; }
+      .about-content img { max-width: 100%; }
+      .about-content table { display: block; max-width: 100%; overflow-x: auto; }
       .choice-dialog { width: min(440px, calc(100vw - 32px)); padding: 23px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 20px 70px rgb(20 40 38 / 25%); }
       .choice-dialog::backdrop { background: rgb(26 45 43 / 42%); }
       .choice-dialog h2 { margin-bottom: 8px; font-size: 23px; }
@@ -299,6 +308,7 @@
               <div class="save-control">
                 <div class="save-actions">
                   <button class="button" id="save-note" type="submit">Save to vault <span aria-hidden="true">↗</span></button>
+                  <button class="button secondary" id="save-capture-draft" type="button">Save as draft</button>
                   <button class="button save-folder-toggle" id="save-folder-toggle" type="button" aria-label="Choose note destination folder" aria-expanded="false" aria-controls="save-folder-menu">▾</button>
                 </div>
                 <span class="save-folder-label" id="save-folder-label">Saving to inbox</span>
@@ -345,7 +355,7 @@
         <section class="view" id="view-drafts" aria-labelledby="drafts-heading">
           <p class="eyebrow">Your work in progress</p>
           <h1 id="drafts-heading">My drafts.</h1>
-          <p class="lead">Saved edits to existing notes stay on this device until you reopen and save them to GitHub.</p>
+          <p class="lead">Capture drafts and saved edits stay on this device until you reopen and save them to GitHub.</p>
           <div class="my-drafts-list" id="my-drafts-list" aria-live="polite">
             <p class="vault-search-help">Loading your saved drafts…</p>
           </div>
@@ -395,6 +405,12 @@
             <p id="install-help" aria-live="polite">Add Pleronic to your home screen for a focused, app-like experience.</p>
             <button class="button secondary" id="install-app" type="button">Install app</button>
           </section>
+          <details class="about-card">
+            <summary>About Pleronic</summary>
+            <div class="about-content markdown" id="about-pleronic-content" aria-live="polite">
+              <p>Loading the README…</p>
+            </div>
+          </details>
         </section>
 
         <section class="view" id="view-reader" aria-labelledby="reader-title">

@@ -1,7 +1,8 @@
-const CACHE_NAME = 'pleronic-v27';
+const CACHE_NAME = 'pleronic-v29';
 const ASSETS = [
   './',
   './index.html',
+  './README.md',
   './app.mjs',
   './github.mjs',
   './obsidian.mjs',

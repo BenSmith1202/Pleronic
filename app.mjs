@@ -6,6 +6,7 @@ import { extractObsidianFrontmatter, headingSlug, resolveImageEmbeds, resolveWik
 const CONFIG_KEY = 'obsidian_config';
 const QUEUE_KEY = 'sync_queue';
 const DRAFT_KEY = 'capture_draft';
+const CAPTURE_DRAFT_PREFIX = 'capture_note_draft:';
 const RECENT_NOTES_KEY = 'recent_notes';
 const RECENT_NOTES_LIMIT = 5;
 const BLOCKED_TAGS = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'TEMPLATE', 'SVG', 'MATH']);
@@ -28,6 +29,7 @@ const elements = {
   content: $('#note-content'),
   form: $('#capture-form'),
   saveButton: $('#save-note'),
+  saveCaptureDraftButton: $('#save-capture-draft'),
   saveFolderToggle: $('#save-folder-toggle'),
   saveFolderMenu: $('#save-folder-menu'),
   saveFolderSearch: $('#save-folder-search'),
@@ -77,6 +79,7 @@ const elements = {
   draftExitDialog: $('#draft-exit-dialog'),
   installButton: $('#install-app'),
   installHelp: $('#install-help'),
+  aboutReadme: $('#about-pleronic-content'),
   toast: $('#toast'),
   owner: $('#gh-owner'),
   repo: $('#gh-repo'),
@@ -112,6 +115,7 @@ let currentView = 'capture';
 let currentNote = null;
 let editDraftTimer;
 let editSaveInProgress = false;
+let activeCaptureDraftId = null;
 let draftExitPromise = null;
 let deferredInstallPrompt = null;
 let syncInProgress = false;
@@ -424,6 +428,18 @@ function updatePreview(markdown, target) {
   }
 }
 
+async function loadAboutReadme() {
+  try {
+    const response = await window.fetch('./README.md');
+    if (!response.ok) throw new Error(`README request failed with HTTP ${response.status}.`);
+    const markdown = await response.text();
+    updatePreview(markdown, elements.aboutReadme);
+  } catch (error) {
+    console.error('Could not load the Pleronic README:', error);
+    elements.aboutReadme.textContent = `About information could not be loaded: ${error.message}`;
+  }
+}
+
 function styleInlineTags(target) {
   const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
   const textNodes = [];
@@ -581,52 +597,58 @@ async function refreshRecentNotes() {
 
 async function loadMyDrafts() {
   const identity = vaultIdentity();
-  if (!identity) {
-    elements.myDraftsList.replaceChildren();
-    const empty = document.createElement('p');
-    empty.className = 'vault-search-help';
-    empty.textContent = 'Connect a vault to see its saved edit drafts.';
-    elements.myDraftsList.append(empty);
-    return;
-  }
-
-  const prefix = `edit_draft:${identity}:`;
   const storedKeys = await keys();
-  const draftKeys = storedKeys.filter((key) => typeof key === 'string' && key.startsWith(prefix));
+  const editPrefix = identity ? `edit_draft:${identity}:` : null;
+  const draftKeys = storedKeys.filter((key) => typeof key === 'string'
+    && (key.startsWith(CAPTURE_DRAFT_PREFIX) || (editPrefix && key.startsWith(editPrefix))));
   const drafts = await getMany(draftKeys);
   if (identity !== vaultIdentity()) return;
 
   const entries = draftKeys.flatMap((key, index) => {
-    const path = key.slice(prefix.length);
     const draft = drafts[index];
-    if (!path || !draft || typeof draft.content !== 'string' || typeof draft.baseSha !== 'string') return [];
-    return [{ path, draft }];
+    if (!draft || typeof draft.content !== 'string' || typeof draft.updatedAt !== 'string') return [];
+    if (key.startsWith(CAPTURE_DRAFT_PREFIX)) {
+      const id = key.slice(CAPTURE_DRAFT_PREFIX.length);
+      if (!id || typeof draft.title !== 'string') return [];
+      return [{ kind: 'capture', id, draft }];
+    }
+    const path = key.slice(editPrefix.length);
+    if (!path || typeof draft.baseSha !== 'string') return [];
+    return [{ kind: 'edit', path, draft }];
   }).sort((left, right) => Date.parse(right.draft.updatedAt) - Date.parse(left.draft.updatedAt));
 
   elements.myDraftsList.replaceChildren();
   if (entries.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'vault-search-help';
-    empty.textContent = 'No saved edit drafts for this vault.';
+    empty.textContent = 'No saved drafts on this device.';
     elements.myDraftsList.append(empty);
   } else {
-    for (const { path, draft } of entries) {
+    for (const entry of entries) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'note-card recent-note-card';
-      button.dataset.draftPath = path;
+      const titleText = entry.kind === 'capture'
+        ? entry.draft.title || 'Untitled note'
+        : formatNoteTitle(entry.path.split('/').at(-1));
+      button.dataset.draftKind = entry.kind;
+      if (entry.kind === 'capture') button.dataset.captureDraftId = entry.id;
+      else button.dataset.draftPath = entry.path;
       const info = document.createElement('span');
       info.className = 'note-info';
       const title = document.createElement('span');
       title.className = 'note-name';
-      title.textContent = formatNoteTitle(path.split('/').at(-1));
+      title.textContent = titleText;
       const meta = document.createElement('span');
       meta.className = 'note-meta';
-      meta.textContent = path;
+      meta.textContent = entry.kind === 'capture'
+        ? `New note${entry.draft.folder ? ` · ${entry.draft.folder}` : ''}`
+        : entry.path;
       info.append(title, meta);
       const savedAt = document.createElement('span');
       savedAt.className = 'recent-when';
-      savedAt.textContent = formatRecentTime(draft.updatedAt);
+      const timestamp = Date.parse(entry.draft.updatedAt);
+      savedAt.textContent = Number.isFinite(timestamp) ? formatRecentTime(entry.draft.updatedAt) : 'Saved locally';
       button.append(info, savedAt);
       elements.myDraftsList.append(button);
     }
@@ -956,6 +978,14 @@ async function storeDraft() {
   try {
     const content = elements.content.value;
     const title = elements.title.value;
+    if (activeCaptureDraftId && (content || title)) {
+      await set(`${CAPTURE_DRAFT_PREFIX}${activeCaptureDraftId}`, {
+        title,
+        content,
+        folder: selectedSaveFolder,
+        updatedAt: new Date().toISOString()
+      });
+    }
     if (content || title) {
       await set(DRAFT_KEY, { title, content, updatedAt: new Date().toISOString() });
       elements.draftStatus.textContent = 'Draft saved on this device';
@@ -967,6 +997,68 @@ async function storeDraft() {
     console.error('Could not save the local draft:', error);
     elements.draftStatus.textContent = 'Draft could not be saved on this device';
   }
+}
+
+async function saveCaptureDraft() {
+  const content = elements.content.value.trim();
+  const title = elements.title.value.trim();
+  if (!content && !title) {
+    showToast('Add a title or some note text before saving a draft.');
+    elements.content.focus();
+    return;
+  }
+
+  const id = activeCaptureDraftId || crypto.randomUUID();
+  const key = `${CAPTURE_DRAFT_PREFIX}${id}`;
+  elements.saveCaptureDraftButton.disabled = true;
+  try {
+    await set(key, {
+      title,
+      content: elements.content.value,
+      folder: selectedSaveFolder,
+      updatedAt: new Date().toISOString()
+    });
+    activeCaptureDraftId = null;
+    elements.title.value = '';
+    elements.content.value = '';
+    clearTimeout(draftTimer);
+    let captureCleanupError = null;
+    try {
+      await del(DRAFT_KEY);
+    } catch (error) {
+      console.error('Saved the capture draft, but could not clear the temporary capture:', error);
+      captureCleanupError = error;
+    }
+    elements.draftStatus.textContent = 'Saved as a draft on this device';
+    updatePreview('', elements.preview);
+    showToast(captureCleanupError
+      ? `Draft saved, but the temporary capture could not be cleared: ${captureCleanupError.message}`
+      : 'Draft saved on this device.');
+  } catch (error) {
+    console.error('Could not save the capture draft:', error);
+    showToast(`Could not save the draft: ${error.message}`);
+  } finally {
+    elements.saveCaptureDraftButton.disabled = false;
+  }
+}
+
+async function openCaptureDraft(id) {
+  const draft = await get(`${CAPTURE_DRAFT_PREFIX}${id}`);
+  if (!draft || typeof draft.title !== 'string' || typeof draft.content !== 'string') {
+    throw new Error('This saved capture draft is missing or invalid.');
+  }
+  activeCaptureDraftId = id;
+  elements.title.value = draft.title;
+  elements.content.value = draft.content;
+  if (typeof draft.folder === 'string') {
+    selectedSaveFolder = draft.folder;
+    updateSaveFolderLabel();
+  }
+  elements.draftStatus.textContent = draft.updatedAt
+    ? `Draft saved ${new Date(draft.updatedAt).toLocaleString()}`
+    : 'Saved as a draft on this device';
+  updatePreview(elements.content.value, elements.preview);
+  await switchView('capture');
 }
 
 async function saveNote(event) {
@@ -995,18 +1087,26 @@ async function saveNote(event) {
     } : null
   };
   elements.saveButton.disabled = true;
+  elements.saveCaptureDraftButton.disabled = true;
   elements.saveFolderToggle.disabled = true;
   elements.saveButton.textContent = 'Saving…';
   try {
     if (!navigator.onLine || !config) {
       await enqueueNote(note);
-      showToast(config ? 'Saved on this device. It will sync when you’re back online.' : 'Saved on this device. Connect a vault to sync it.');
+      const draftRemoved = await removeActiveCaptureDraft();
+      const message = config
+        ? 'Saved on this device. It will sync when you’re back online.'
+        : 'Saved on this device. Connect a vault to sync it.';
+      showToast(draftRemoved ? message : `${message} The original draft remains in Drafts.`);
       clearEditor();
       return;
     }
     await clientFromConfig().createNote(repositoryPath(note), note.content, note.title);
     invalidateMarkdownPathIndex();
-    showToast('Note saved to your vault.');
+    const draftRemoved = await removeActiveCaptureDraft();
+    showToast(draftRemoved
+      ? 'Note saved to your vault.'
+      : 'Note saved to your vault, but the local draft remains in Drafts.');
     clearEditor();
     if (currentView === 'inbox') fetchInbox();
   } catch (error) {
@@ -1023,7 +1123,9 @@ async function saveNote(event) {
           return;
         }
         showToast('That note is already saved in your vault.');
+        const draftRemoved = await removeActiveCaptureDraft();
         clearEditor();
+        if (!draftRemoved) showToast('The note was already saved, but the local draft remains in Drafts.');
         return;
       } catch (lookupError) {
         if (!(lookupError instanceof GitHubApiError) || lookupError.status !== 404) {
@@ -1033,7 +1135,9 @@ async function saveNote(event) {
     }
     try {
       await enqueueNote(note);
-      showToast(`Saved on this device; GitHub could not save it: ${error.message}`);
+      const draftRemoved = await removeActiveCaptureDraft();
+      const draftWarning = draftRemoved ? '' : ' The original draft remains in Drafts.';
+      showToast(`Saved on this device; GitHub could not save it: ${error.message}${draftWarning}`);
       clearEditor();
       setConnection('error', 'Note waiting to sync');
     } catch (queueError) {
@@ -1042,8 +1146,22 @@ async function saveNote(event) {
     }
   } finally {
     elements.saveButton.disabled = false;
+    elements.saveCaptureDraftButton.disabled = false;
     elements.saveFolderToggle.disabled = false;
     elements.saveButton.innerHTML = 'Save to vault <span aria-hidden="true">↗</span>';
+  }
+}
+
+async function removeActiveCaptureDraft() {
+  if (!activeCaptureDraftId) return true;
+  const key = `${CAPTURE_DRAFT_PREFIX}${activeCaptureDraftId}`;
+  try {
+    await del(key);
+    activeCaptureDraftId = null;
+    return true;
+  } catch (error) {
+    console.error('The note was saved, but its capture draft could not be removed:', error);
+    return false;
   }
 }
 
@@ -1060,6 +1178,7 @@ async function enqueueNote(note) {
 }
 
 function clearEditor() {
+  activeCaptureDraftId = null;
   elements.title.value = '';
   elements.content.value = '';
   updatePreview('', elements.preview);
@@ -1624,6 +1743,7 @@ async function initialize() {
 
   updatePreview(elements.content.value, elements.preview);
   switchView('capture');
+  void loadAboutReadme();
 }
 
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => {
@@ -1664,6 +1784,7 @@ elements.copyLocalDraftButton.addEventListener('click', async () => {
   }
 });
 elements.form.addEventListener('submit', (event) => runUiAction('Could not save the note.', () => saveNote(event)));
+elements.saveCaptureDraftButton.addEventListener('click', () => runUiAction('Could not save the draft.', saveCaptureDraft));
 elements.saveFolderToggle.addEventListener('click', () => runUiAction('Could not open the folder picker.', openSaveFolderMenu));
 elements.saveFolderSearch.addEventListener('input', renderSaveFolderOptions);
 elements.saveFolderOptions.addEventListener('click', (event) => {
@@ -1737,8 +1858,12 @@ elements.recentNoteList.addEventListener('click', (event) => {
   if (note) runUiAction('Could not open that note.', () => openNote(note));
 });
 elements.myDraftsList.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-draft-path]');
+  const button = event.target.closest('[data-draft-kind]');
   if (!button) return;
+  if (button.dataset.draftKind === 'capture') {
+    runUiAction('Could not open that draft.', () => openCaptureDraft(button.dataset.captureDraftId));
+    return;
+  }
   const path = button.dataset.draftPath;
   runUiAction('Could not open that draft.', () => openNote({ name: path.split('/').at(-1), path }));
 });
