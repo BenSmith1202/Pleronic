@@ -52,6 +52,15 @@ export function decodeUtf8Base64(base64) {
   return new TextDecoder().decode(bytes);
 }
 
+export function noteFilename(title) {
+  const safeTitle = title
+    .trim()
+    .replace(/[<>:"/\\|?*#^\u0000-\u001f]/g, '-')
+    .replace(/[. ]+$/g, '')
+    .trim();
+  return `${safeTitle || 'Untitled'}.md`;
+}
+
 export class GitHubClient {
   constructor(config, fetchImpl = globalThis.fetch) {
     this.config = validateConfig(config);

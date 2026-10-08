@@ -5,6 +5,7 @@ import {
   encodeUtf8Base64,
   GitHubApiError,
   GitHubClient,
+  noteFilename,
   validateConfig
 } from '../github.mjs';
 
@@ -54,6 +55,16 @@ test('config tells users to enter the repository name instead of its URL', () =>
 test('base64 helpers round-trip Unicode note content', () => {
   const note = 'Café — こんにちは 🌱';
   assert.equal(decodeUtf8Base64(encodeUtf8Base64(note)), note);
+});
+
+test('note filenames use the title without timestamp or slug conversion', () => {
+  assert.equal(noteFilename('My Field Notes 🌲'), 'My Field Notes 🌲.md');
+});
+
+test('note filenames replace filesystem and Obsidian-reserved characters', () => {
+  assert.equal(noteFilename('Plan: A/B? #1'), 'Plan- A-B- -1.md');
+  assert.equal(noteFilename('  Name...  '), 'Name.md');
+  assert.equal(noteFilename('   '), 'Untitled.md');
 });
 
 test('connection test requests the configured repository branch with the token', async () => {

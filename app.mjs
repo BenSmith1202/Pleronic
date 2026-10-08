@@ -1,6 +1,6 @@
 import { marked } from './vendor/marked.esm.js';
 import { del, get, set } from './vendor/idb-keyval.js';
-import { GitHubApiError, GitHubClient, validateConfig } from './github.mjs';
+import { GitHubApiError, GitHubClient, noteFilename, validateConfig } from './github.mjs';
 
 const CONFIG_KEY = 'obsidian_config';
 const QUEUE_KEY = 'sync_queue';
@@ -271,19 +271,6 @@ async function fetchInbox() {
   }
 }
 
-function makeNotePath(title) {
-  const readableTitle = title.normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 70) || 'untitled';
-  const now = new Date();
-  const date = now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
-  const suffix = crypto.randomUUID().slice(0, 8);
-  return `${date}-${suffix}-${readableTitle}.md`;
-}
-
 async function storeDraft() {
   try {
     const content = elements.content.value;
@@ -314,7 +301,7 @@ async function saveNote(event) {
   const title = enteredTitle || `Note ${new Date().toLocaleString()}`;
   const note = {
     id: crypto.randomUUID(),
-    relativePath: makeNotePath(enteredTitle || 'note'),
+    relativePath: noteFilename(title),
     title,
     content: elements.content.value.trim(),
     createdAt: new Date().toISOString(),
@@ -344,6 +331,22 @@ async function saveNote(event) {
       return;
     }
     console.error('Could not save the note to GitHub:', error);
+    if (error instanceof GitHubApiError && error.status === 422) {
+      try {
+        const existing = await clientFromConfig().readNote(repositoryPath(note));
+        if (existing !== note.content) {
+          showToast(`“${note.relativePath}” already exists. Choose a different title; the existing note was not changed.`);
+          return;
+        }
+        showToast('That note is already saved in your vault.');
+        clearEditor();
+        return;
+      } catch (lookupError) {
+        if (!(lookupError instanceof GitHubApiError) || lookupError.status !== 404) {
+          console.error('Could not check whether the note already exists:', lookupError);
+        }
+      }
+    }
     try {
       await enqueueNote(note);
       showToast(`Saved on this device; GitHub could not save it: ${error.message}`);
@@ -426,7 +429,9 @@ async function syncQueuedNote(note, destination) {
   } catch (error) {
     if (!(error instanceof GitHubApiError) || error.status !== 422) throw error;
     const existing = await client.readNote(path);
-    if (existing !== note.content) throw error;
+    if (existing !== note.content) {
+      throw new Error(`“${note.relativePath}” already exists. Rename or remove that file before syncing this queued note.`);
+    }
   }
 }
 
