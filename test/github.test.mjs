@@ -5,6 +5,7 @@ import {
   encodeUtf8Base64,
   GitHubApiError,
   GitHubClient,
+  isImagePath,
   noteFilename,
   validateConfig
 } from '../github.mjs';
@@ -214,13 +215,47 @@ test('listDirectory shows folders and Markdown notes, with folders first', async
       { type: 'file', name: 'zebra.md', path: 'zebra.md' },
       { type: 'file', name: 'photo.png', path: 'photo.png' },
       { type: 'dir', name: 'Work', path: 'Work' },
-      { type: 'file', name: 'alpha.MD', path: 'alpha.MD' }
+      { type: 'file', name: 'alpha.MD', path: 'alpha.MD' },
+      { type: 'file', name: 'cover photo.JPEG', path: 'cover photo.JPEG' }
     ]);
   });
 
   const entries = await client.listDirectory('Projects/Field Notes');
   assert.match(requestedUrl, /\/contents\/Projects\/Field%20Notes\?ref=main$/);
-  assert.deepEqual(entries.map((entry) => entry.name), ['Work', 'alpha.MD', 'zebra.md']);
+  assert.deepEqual(entries.map((entry) => entry.name), ['Work', 'alpha.MD', 'cover photo.JPEG', 'photo.png', 'zebra.md']);
+});
+
+test('image paths include common raster photo formats only', () => {
+  for (const path of ['cover.jpg', 'cover.JPEG', 'cover.png', 'cover.gif', 'cover.webp', 'cover.avif']) {
+    assert.equal(isImagePath(path), true);
+  }
+  for (const path of ['note.md', 'vector.svg', 'archive.zip']) assert.equal(isImagePath(path), false);
+});
+
+test('readImage requests authenticated raw image content and validates its MIME type', async () => {
+  const requests = [];
+  const client = new GitHubClient(config, async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith('/branches/main')) return response(200, { name: 'main' });
+    return {
+      ok: true,
+      blob: async () => new Blob(['image-bytes'], { type: 'application/octet-stream' })
+    };
+  });
+
+  await client.testConnection();
+  const image = await client.readImage('Attachments/cover photo.JPG');
+  assert.equal(image.type, 'image/jpeg');
+  assert.equal(requests[1].url, 'https://api.github.com/repos/octo-user/my-vault/contents/Attachments/cover%20photo.JPG?ref=main');
+  assert.equal(requests[1].options.headers.Accept, 'application/vnd.github.raw');
+  assert.equal(requests[1].options.headers.Authorization, requests[0].options.headers.Authorization);
+});
+
+test('readImage refuses unsupported formats without making a request', async () => {
+  const client = new GitHubClient(config, async () => {
+    throw new Error('A request should not be sent for unsupported image types.');
+  });
+  await assert.rejects(client.readImage('Attachments/vector.svg'), /not supported/);
 });
 
 test('listMarkdownPaths requests the recursive branch tree and returns Markdown paths', async () => {
@@ -257,6 +292,7 @@ test('listVaultIndex returns Markdown paths and directories, including folders w
         { type: 'tree', path: 'Projects' },
         { type: 'tree', path: 'Projects/Forest' },
         { type: 'blob', path: 'Projects/Forest/map.png' },
+        { type: 'blob', path: 'Projects/Forest/photo.svg' },
         { type: 'blob', path: 'Projects/Forest/Notes.md' }
       ]
     });
@@ -264,6 +300,7 @@ test('listVaultIndex returns Markdown paths and directories, including folders w
 
   assert.deepEqual(await client.listVaultIndex(), {
     markdownPaths: ['Projects/Forest/Notes.md'],
+    imagePaths: ['Projects/Forest/map.png'],
     directories: ['', 'Projects', 'Projects/Forest']
   });
 });

@@ -139,8 +139,8 @@ Recent-note history and drafts are stored in the browser/device that created the
 Pleronic is a lightweight companion, not a complete Obsidian replacement:
 
 - Obsidian plugins, Dataview, canvas files, and other plugin-generated views are not rendered.
-- Embedded vault images and attachments are not currently resolved or previewed.
-- Only Markdown files are shown in the folder browser and searched.
+- Raster images in Markdown/Obsidian embeds and the folder browser can be previewed: AVIF, GIF, JPEG, PNG, and WebP. Previews are limited to 20 MB per image. SVG and other attachment types are not rendered.
+- Only Markdown files are searched; supported image files are listed alongside notes in folders.
 - Tags are visual only; tag filtering is not implemented.
 - Vault access, browsing, and search depend on GitHub API availability, token permissions, and API limits.
 - Wiki links and whole-vault search rely on GitHub's recursive file index. For very large repositories the index may be truncated.

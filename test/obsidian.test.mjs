@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { extractObsidianFrontmatter, headingSlug, resolveWikiLink, resolveWikiLinks } from '../obsidian.mjs';
+import {
+  extractObsidianFrontmatter,
+  headingSlug,
+  resolveAttachmentPath,
+  resolveImageEmbeds,
+  resolveWikiLink,
+  resolveWikiLinks
+} from '../obsidian.mjs';
 
 const paths = [
   'Home.md',
@@ -49,6 +56,27 @@ test('wiki links preserve aliases and are not rewritten inside code', () => {
     resolveWikiLinks(source, 'Projects/Forest.md', paths),
     'See [start here](vault:Home.md) and `[[Home]]`.\n\n```md\n[[Home]]\n```'
   );
+});
+
+test('image embeds resolve relative to note folders and support Obsidian aliases', () => {
+  const images = ['Projects/Attachments/Forest walk.jpg', 'Attachments/cover.png'];
+  assert.equal(
+    resolveImageEmbeds('![[Attachments/Forest%20walk.jpg|Forest canopy]]', 'Projects/Notes.md', images),
+    '![Forest canopy](vault-attachment:Projects%2FAttachments%2FForest%20walk.jpg)'
+  );
+  assert.equal(
+    resolveImageEmbeds('![Cover](../Attachments/cover.png)', 'Projects/Notes.md', images),
+    '![Cover](vault-attachment:Attachments%2Fcover.png)'
+  );
+});
+
+test('image embeds preserve external, unresolved, and code-block references', () => {
+  const source = '![Web](https://example.com/image.png) ![[missing.png]]\n\n`![[missing.png]]`';
+  assert.equal(resolveImageEmbeds(source, 'Home.md', []), source);
+});
+
+test('attachment paths cannot traverse above the vault root', () => {
+  assert.equal(resolveAttachmentPath('../../secret.png', 'Notes/Entry.md', ['secret.png']), null);
 });
 
 test('heading slugs are stable for punctuation, accents, and spacing', () => {

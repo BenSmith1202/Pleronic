@@ -6,6 +6,7 @@ Notable changes to Pleronic are documented here.
 
 ### Added
 
+- Preview AVIF, GIF, JPEG, PNG, and WebP attachments from vault folders and Markdown/Obsidian image embeds, with a 20 MB per-image limit.
 - Added an editor for existing Markdown notes with device-local drafts, explicit conflict reconciliation, and SHA-guarded updates that preserve ordinary Git history.
 - Local edit drafts persist without repeated navigation prompts and are clearly marked; when a remote version changes, users can keep the local draft or switch to the remote version.
 - Added a Settings install button that opens the browser install prompt or displays Add to Home Screen instructions.
@@ -24,6 +25,7 @@ Notable changes to Pleronic are documented here.
 
 ### Changed
 
+- Show an inline “Attachment couldn't be loaded” message when an image cannot be fetched or decoded, avoid serving the app shell for failed offline asset requests, and surface unexpected async action failures.
 - Reworked the capture experience as a mobile-friendly installable PWA.
 - Notes use the supplied title as the Markdown filename; existing notes are not silently overwritten.
 - The Settings default note folder now acts as the default destination, with per-note folder selection available during capture.

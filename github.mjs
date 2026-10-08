@@ -1,4 +1,16 @@
 const API_ROOT = 'https://api.github.com';
+const IMAGE_MIME_TYPES = new Map([
+  ['avif', 'image/avif'],
+  ['gif', 'image/gif'],
+  ['jpeg', 'image/jpeg'],
+  ['jpg', 'image/jpeg'],
+  ['png', 'image/png'],
+  ['webp', 'image/webp']
+]);
+
+export function isImagePath(path) {
+  return IMAGE_MIME_TYPES.has(path.split('.').at(-1).toLocaleLowerCase());
+}
 
 export class GitHubApiError extends Error {
   constructor(status, message) {
@@ -127,7 +139,7 @@ export class GitHubClient {
       throw new Error(`GitHub did not return a directory listing for ${path || 'the vault root'}.`);
     }
     return entries
-      .filter((entry) => entry.type === 'dir' || (entry.type === 'file' && /\.md$/i.test(entry.name)))
+      .filter((entry) => entry.type === 'dir' || (entry.type === 'file' && (/\.md$/i.test(entry.name) || isImagePath(entry.name))))
       .sort((left, right) => {
         if (left.type !== right.type) return left.type === 'dir' ? -1 : 1;
         return left.name.localeCompare(right.name, undefined, { sensitivity: 'base' });
@@ -150,10 +162,14 @@ export class GitHubClient {
       throw new Error('This vault is too large for GitHub’s complete file index. Folder browsing still works, but search, wiki links, and the destination folder list may be incomplete.');
     }
     const markdownPaths = [];
+    const imagePaths = [];
     const directories = new Set(['']);
     for (const entry of tree.tree) {
       if (typeof entry.path !== 'string') continue;
-      if (entry.type === 'blob' && /\.md$/i.test(entry.path)) markdownPaths.push(entry.path);
+      if (entry.type === 'blob') {
+        if (/\.md$/i.test(entry.path)) markdownPaths.push(entry.path);
+        else if (isImagePath(entry.path)) imagePaths.push(entry.path);
+      }
       let parent = '';
       const parts = entry.path.split('/');
       for (const part of entry.type === 'tree' ? parts : parts.slice(0, -1)) {
@@ -164,6 +180,7 @@ export class GitHubClient {
     }
     return {
       markdownPaths,
+      imagePaths,
       directories: [...directories].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
     };
   }
@@ -193,6 +210,44 @@ export class GitHubClient {
       content: decodeUtf8Base64(file.content),
       sha: file.sha
     };
+  }
+
+  async readImage(path) {
+    const extension = path.split('.').at(-1).toLocaleLowerCase();
+    const expectedMimeType = IMAGE_MIME_TYPES.get(extension);
+    if (!expectedMimeType) throw new Error('This image format is not supported.');
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const ref = new URLSearchParams({ ref: this.config.branch }).toString();
+    const response = await this.fetch(`${API_ROOT}${this.repositoryPath}/contents/${encodedPath}?${ref}`, {
+      headers: {
+        Accept: 'application/vnd.github.raw',
+        Authorization: `Bearer ${this.config.token}`,
+        'X-GitHub-Api-Version': '2022-11-28'
+      }
+    });
+    if (!response.ok) {
+      let message = response.statusText || 'Image request failed';
+      try {
+        const body = await response.json();
+        if (typeof body.message === 'string') message = body.message;
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+      throw new GitHubApiError(response.status, message);
+    }
+    const contentLength = Number(response.headers?.get('content-length'));
+    if (Number.isFinite(contentLength) && contentLength > 20 * 1024 * 1024) {
+      throw new Error('This image is larger than Pleronic’s 20 MB preview limit.');
+    }
+    const blob = await response.blob();
+    if (blob.size > 20 * 1024 * 1024) {
+      throw new Error('This image is larger than Pleronic’s 20 MB preview limit.');
+    }
+    const responseMimeType = blob.type.toLocaleLowerCase().split(';')[0];
+    if (responseMimeType && responseMimeType !== 'application/octet-stream' && responseMimeType !== expectedMimeType) {
+      throw new Error('GitHub returned an unexpected image format.');
+    }
+    return responseMimeType === expectedMimeType ? blob : new Blob([blob], { type: expectedMimeType });
   }
 
   async updateNote(path, content, title, sha) {

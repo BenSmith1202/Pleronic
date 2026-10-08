@@ -1,7 +1,7 @@
 import { marked } from './vendor/marked.esm.js';
 import { del, get, set } from './vendor/idb-keyval.js';
-import { GitHubApiError, GitHubClient, noteFilename, validateConfig } from './github.mjs';
-import { extractObsidianFrontmatter, headingSlug, resolveWikiLinks } from './obsidian.mjs';
+import { GitHubApiError, GitHubClient, isImagePath, noteFilename, validateConfig } from './github.mjs';
+import { extractObsidianFrontmatter, headingSlug, resolveImageEmbeds, resolveWikiLinks } from './obsidian.mjs';
 
 const CONFIG_KEY = 'obsidian_config';
 const QUEUE_KEY = 'sync_queue';
@@ -53,6 +53,11 @@ const elements = {
   readerTags: $('#reader-tags'),
   readerFrontmatter: $('#reader-frontmatter'),
   readerFrontmatterContent: $('#reader-frontmatter-content'),
+  imageViewer: $('#image-viewer'),
+  imageViewerTitle: $('#image-viewer-title'),
+  imageViewerImage: $('#image-viewer-image'),
+  imageViewerError: $('#image-viewer-error'),
+  imageViewerPath: $('#image-viewer-path'),
   readerBack: $('#reader-back'),
   readerBackLabel: $('#reader-back-label'),
   readerContent: $('#reader-content'),
@@ -95,6 +100,12 @@ let vaultSearchResults = null;
 let vaultSearchRun = 0;
 let markdownPathIndex = null;
 let markdownPathIndexKey = '';
+let vaultImagePaths = null;
+let vaultImagePathsKey = '';
+let attachmentImageUrls = new Set();
+let attachmentLoadRun = 0;
+let imageViewerUrl = null;
+let imageViewerRequest = 0;
 let currentView = 'capture';
 let currentNote = null;
 let editDraftTimer;
@@ -121,6 +132,17 @@ function showToast(message) {
   elements.toast.classList.add('active');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => elements.toast.classList.remove('active'), 4200);
+}
+
+function runUiAction(label, action) {
+  void (async () => {
+    try {
+      await action();
+    } catch (error) {
+      console.error(label, error);
+      showToast(`${label} ${error.message}`);
+    }
+  })();
 }
 
 function setConnection(state, label) {
@@ -357,6 +379,11 @@ function updatePreview(markdown, target) {
     } else if (element.tagName === 'IMG') {
       const src = safeUrl(element.getAttribute('src'), true);
       if (!src) return;
+      if (!src.startsWith('vault-attachment:')) {
+        safeElement.addEventListener('error', () => {
+          if (safeElement.isConnected) showAttachmentError(safeElement);
+        }, { once: true });
+      }
       safeElement.setAttribute('src', src);
       safeElement.setAttribute('alt', element.getAttribute('alt') || '');
       safeElement.setAttribute('loading', 'lazy');
@@ -411,6 +438,7 @@ function styleInlineTags(target) {
 function safeUrl(value, image) {
   if (!value) return null;
   if (!image && value.startsWith('vault:')) return value;
+  if (image && value.startsWith('vault-attachment:')) return value;
   try {
     const url = new URL(value, location.href);
     const allowed = image ? ['https:', 'http:'] : ['https:', 'http:', 'mailto:'];
@@ -553,25 +581,27 @@ function renderInbox() {
   }
 
   for (const entry of entries) {
+    const imageEntry = entry.type === 'file' && isImagePath(entry.path);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'note-card';
     if (entry.type === 'dir') button.dataset.directoryPath = entry.path;
+    else if (imageEntry) button.dataset.imagePath = entry.path;
     else button.dataset.notePath = entry.path;
     const icon = document.createElement('span');
     icon.className = 'note-file';
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = entry.type === 'dir' ? '▱' : '▤';
+    icon.textContent = entry.type === 'dir' ? '▱' : imageEntry ? '▧' : '▤';
     const info = document.createElement('span');
     info.className = 'note-info';
     const title = document.createElement('span');
     title.className = 'note-name';
-    title.textContent = entry.type === 'dir' ? entry.name : formatNoteTitle(entry.name);
+    title.textContent = entry.type === 'dir' ? entry.name : imageEntry ? entry.name : formatNoteTitle(entry.name);
     const meta = document.createElement('span');
     meta.className = 'note-meta';
     meta.textContent = entry.type === 'dir'
       ? `Folder · ${entry.path}`
-      : entry.path;
+      : imageEntry ? `Image · ${entry.path}` : entry.path;
     info.append(title, meta);
     if (entry.snippet) {
       const snippet = document.createElement('span');
@@ -581,7 +611,7 @@ function renderInbox() {
     }
     const kind = document.createElement('span');
     kind.className = 'note-kind';
-    kind.textContent = entry.type === 'dir' ? 'FOLDER' : 'NOTE';
+    kind.textContent = entry.type === 'dir' ? 'FOLDER' : imageEntry ? 'IMAGE' : 'NOTE';
     const arrow = document.createElement('span');
     arrow.className = 'note-arrow';
     arrow.setAttribute('aria-hidden', 'true');
@@ -721,6 +751,8 @@ function invalidateMarkdownPathIndex() {
   vaultIndexGeneration += 1;
   markdownPathIndex = null;
   markdownPathIndexKey = '';
+  vaultImagePaths = null;
+  vaultImagePathsKey = '';
   vaultDirectories = null;
   vaultDirectoriesKey = '';
   vaultIndexPromise = null;
@@ -730,8 +762,8 @@ function invalidateMarkdownPathIndex() {
 async function getVaultIndex() {
   const key = vaultIndexKey();
   const generation = vaultIndexGeneration;
-  if (markdownPathIndex && key === markdownPathIndexKey && vaultDirectories && key === vaultDirectoriesKey) {
-    return { markdownPaths: markdownPathIndex, directories: vaultDirectories };
+  if (markdownPathIndex && key === markdownPathIndexKey && vaultImagePaths && key === vaultImagePathsKey && vaultDirectories && key === vaultDirectoriesKey) {
+    return { markdownPaths: markdownPathIndex, imagePaths: vaultImagePaths, directories: vaultDirectories };
   }
   if (vaultIndexPromise && key === vaultIndexPromiseKey) return vaultIndexPromise;
 
@@ -743,6 +775,8 @@ async function getVaultIndex() {
     if (generation !== vaultIndexGeneration || key !== vaultIndexKey()) return getVaultIndex();
     markdownPathIndex = index.markdownPaths;
     markdownPathIndexKey = key;
+    vaultImagePaths = index.imagePaths;
+    vaultImagePathsKey = key;
     vaultDirectories = index.directories;
     vaultDirectoriesKey = key;
     return index;
@@ -756,6 +790,10 @@ async function getVaultIndex() {
 
 async function getMarkdownPaths() {
   return (await getVaultIndex()).markdownPaths;
+}
+
+async function getImagePaths() {
+  return (await getVaultIndex()).imagePaths;
 }
 
 function saveFolderDisplay(path) {
@@ -1239,18 +1277,105 @@ async function useRemoteVersion() {
   await renderVaultNote(remote.content, currentNote.path);
 }
 
+function clearAttachmentImageUrls() {
+  attachmentLoadRun += 1;
+  for (const url of attachmentImageUrls) URL.revokeObjectURL(url);
+  attachmentImageUrls.clear();
+}
+
+function showAttachmentError(image) {
+  const message = document.createElement('span');
+  message.className = 'attachment-error';
+  message.setAttribute('role', 'status');
+  message.textContent = "Attachment couldn't be loaded.";
+  image.replaceWith(message);
+}
+
+async function loadEmbeddedImages(notePath) {
+  const run = ++attachmentLoadRun;
+  const images = [...elements.readerContent.querySelectorAll('img[src^="vault-attachment:"]')];
+  let next = 0;
+  const loadNext = async () => {
+    while (next < images.length) {
+      const image = images[next];
+      next += 1;
+      let path = '';
+      let objectUrl = null;
+      try {
+        path = decodeURIComponent(image.getAttribute('src').slice('vault-attachment:'.length));
+        const blob = await clientFromConfig().readImage(path);
+        if (run !== attachmentLoadRun || currentNote?.path !== notePath) continue;
+        objectUrl = URL.createObjectURL(blob);
+        attachmentImageUrls.add(objectUrl);
+        image.dataset.vaultPath = path;
+        image.src = objectUrl;
+        await image.decode();
+        if (run !== attachmentLoadRun || currentNote?.path !== notePath) continue;
+      } catch (error) {
+        if (run !== attachmentLoadRun || currentNote?.path !== notePath) continue;
+        console.error(`Could not load embedded image ${path || ''}:`, error);
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          attachmentImageUrls.delete(objectUrl);
+        }
+        if (image.isConnected) showAttachmentError(image);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, images.length) }, loadNext));
+}
+
+async function openVaultImage(path) {
+  const request = ++imageViewerRequest;
+  if (imageViewerUrl) {
+    URL.revokeObjectURL(imageViewerUrl);
+    imageViewerUrl = null;
+  }
+  elements.imageViewerImage.removeAttribute('src');
+  elements.imageViewerImage.hidden = false;
+  elements.imageViewerError.hidden = true;
+  elements.imageViewerTitle.textContent = 'Loading image…';
+  elements.imageViewerPath.textContent = path;
+  elements.imageViewer.showModal();
+  try {
+    const blob = await clientFromConfig().readImage(path);
+    if (request !== imageViewerRequest || !elements.imageViewer.open) return;
+    imageViewerUrl = URL.createObjectURL(blob);
+    elements.imageViewerImage.src = imageViewerUrl;
+    await elements.imageViewerImage.decode();
+    if (request !== imageViewerRequest || !elements.imageViewer.open) return;
+    elements.imageViewerTitle.textContent = path.split('/').at(-1);
+  } catch (error) {
+    if (request !== imageViewerRequest || !elements.imageViewer.open) return;
+    console.error(`Could not open vault image ${path}:`, error);
+    elements.imageViewerTitle.textContent = 'Could not load image';
+    if (imageViewerUrl) URL.revokeObjectURL(imageViewerUrl);
+    imageViewerUrl = null;
+    elements.imageViewerImage.removeAttribute('src');
+    elements.imageViewerImage.hidden = true;
+    elements.imageViewerError.hidden = false;
+  }
+}
+
 async function renderVaultNote(markdown, path) {
+  clearAttachmentImageUrls();
   const note = extractObsidianFrontmatter(markdown);
-  elements.readerFrontmatter.hidden = note.frontmatter === null;
-  elements.readerFrontmatterContent.textContent = note.frontmatter || '';
   let linkedMarkdown = note.markdown;
   try {
-    linkedMarkdown = resolveWikiLinks(note.markdown, path, await getMarkdownPaths());
+    const [markdownPaths, imagePaths] = await Promise.all([getMarkdownPaths(), getImagePaths()]);
+    if (currentNote?.path !== path) return;
+    linkedMarkdown = resolveWikiLinks(note.markdown, path, markdownPaths);
+    linkedMarkdown = resolveImageEmbeds(linkedMarkdown, path, imagePaths);
   } catch (error) {
     console.error('Could not build the vault link index:', error);
-    showToast(`Note opened, but vault links could not be resolved: ${error.message}`);
+    showToast(`Note opened, but vault links or images could not be resolved: ${error.message}`);
   }
+  if (currentNote?.path !== path) return;
+  elements.readerFrontmatter.hidden = note.frontmatter === null;
+  elements.readerFrontmatterContent.textContent = note.frontmatter || '';
   updatePreview(linkedMarkdown, elements.readerContent);
+  await loadEmbeddedImages(path);
+  if (currentNote?.path !== path) return;
   elements.readerTags.replaceChildren();
   for (const tagName of note.tags) {
     const tag = document.createElement('span');
@@ -1280,7 +1405,7 @@ function navigateVaultLink(href) {
     return;
   }
   const name = targetPath.split('/').at(-1);
-  void openNote({ name, path: targetPath }, heading);
+  runUiAction('Could not open that note.', () => openNote({ name, path: targetPath }, heading));
 }
 
 function populateSettingsForm() {
@@ -1409,7 +1534,7 @@ async function initialize() {
   try {
     const [queue, draft] = await Promise.all([getQueue(), get(DRAFT_KEY)]);
     updateQueueStatus(queue);
-      if (queue.length && navigator.onLine && config) void syncQueue();
+    if (queue.length && navigator.onLine && config) runUiAction('Could not sync queued notes.', syncQueue);
     if (draft && typeof draft === 'object') {
       elements.title.value = typeof draft.title === 'string' ? draft.title : '';
       elements.content.value = typeof draft.content === 'string' ? draft.content : '';
@@ -1425,23 +1550,36 @@ async function initialize() {
   switchView('capture');
 }
 
-$$('[data-view]').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
-$('#top-settings').addEventListener('click', () => switchView('settings'));
+$$('[data-view]').forEach((button) => button.addEventListener('click', () => {
+  runUiAction('Could not change views.', () => switchView(button.dataset.view));
+}));
+$('#top-settings').addEventListener('click', () => {
+  runUiAction('Could not open settings.', () => switchView('settings'));
+});
 elements.readerBack.addEventListener('click', () => {
-  void (async () => {
+  runUiAction('Could not return to the vault.', async () => {
     if (!await prepareToLeaveEditor()) return;
     currentDirectory = readerParentPath;
     elements.search.value = '';
     clearVaultSearch();
     await switchView('inbox', true);
-  })();
+  });
 });
 elements.editButton.addEventListener('click', startEditingNote);
-elements.cancelEditButton.addEventListener('click', () => void cancelEditingNote());
-elements.saveEditButton.addEventListener('click', () => void saveEditedNote());
+elements.cancelEditButton.addEventListener('click', () => runUiAction('Could not cancel editing.', cancelEditingNote));
+elements.saveEditButton.addEventListener('click', () => runUiAction('Could not save the edit.', saveEditedNote));
+$('#close-image-viewer').addEventListener('click', () => elements.imageViewer.close());
+elements.imageViewer.addEventListener('close', () => {
+  imageViewerRequest += 1;
+  if (imageViewerUrl) URL.revokeObjectURL(imageViewerUrl);
+  imageViewerUrl = null;
+  elements.imageViewerImage.removeAttribute('src');
+  elements.imageViewerImage.hidden = false;
+  elements.imageViewerError.hidden = true;
+});
 elements.editContent.addEventListener('input', scheduleEditDraftSave);
-elements.acceptRemoteVersionButton.addEventListener('click', () => void acceptRemoteVersion());
-$('#use-remote-version').addEventListener('click', () => void useRemoteVersion());
+elements.acceptRemoteVersionButton.addEventListener('click', () => runUiAction('Could not keep the local draft.', acceptRemoteVersion));
+$('#use-remote-version').addEventListener('click', () => runUiAction('Could not use the remote note.', useRemoteVersion));
 elements.copyLocalDraftButton.addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(elements.editContent.value);
@@ -1451,8 +1589,8 @@ elements.copyLocalDraftButton.addEventListener('click', async () => {
     showToast(`Could not copy your draft: ${error.message}`);
   }
 });
-elements.form.addEventListener('submit', saveNote);
-elements.saveFolderToggle.addEventListener('click', openSaveFolderMenu);
+elements.form.addEventListener('submit', (event) => runUiAction('Could not save the note.', () => saveNote(event)));
+elements.saveFolderToggle.addEventListener('click', () => runUiAction('Could not open the folder picker.', openSaveFolderMenu));
 elements.saveFolderSearch.addEventListener('input', renderSaveFolderOptions);
 elements.saveFolderOptions.addEventListener('click', (event) => {
   const option = event.target.closest('[data-save-folder]');
@@ -1477,15 +1615,15 @@ document.addEventListener('keydown', (event) => {
     elements.saveFolderToggle.focus();
   }
 });
-elements.vaultSearchForm.addEventListener('submit', searchVault);
-$('#settings-form').addEventListener('submit', saveSettings);
-elements.installButton.addEventListener('click', () => void installPleronic());
+elements.vaultSearchForm.addEventListener('submit', (event) => runUiAction('Could not search the vault.', () => searchVault(event)));
+$('#settings-form').addEventListener('submit', (event) => runUiAction('Could not save settings.', () => saveSettings(event)));
+elements.installButton.addEventListener('click', () => runUiAction('Could not install Pleronic.', installPleronic));
 $('#github-token-help-button').addEventListener('click', () => $('#github-token-dialog').showModal());
 $('#close-github-token-dialog').addEventListener('click', () => $('#github-token-dialog').close());
-$('#test-connection').addEventListener('click', testConnection);
+$('#test-connection').addEventListener('click', () => runUiAction('Could not test the GitHub connection.', testConnection));
 $('#disconnect').addEventListener('click', disconnect);
-elements.syncButton.addEventListener('click', syncQueue);
-$('#refresh-inbox').addEventListener('click', fetchInbox);
+elements.syncButton.addEventListener('click', () => runUiAction('Could not sync queued notes.', syncQueue));
+$('#refresh-inbox').addEventListener('click', () => runUiAction('Could not refresh the vault.', fetchInbox));
 elements.search.addEventListener('input', () => {
   clearVaultSearch();
   renderInbox();
@@ -1496,22 +1634,32 @@ elements.noteList.addEventListener('click', (event) => {
     currentDirectory = directory.dataset.directoryPath;
     elements.search.value = '';
     clearVaultSearch();
-    fetchInbox();
+    runUiAction('Could not open that folder.', fetchInbox);
+    return;
+  }
+  const image = event.target.closest('[data-image-path]');
+  if (image) {
+    runUiAction('Could not open that image.', () => openVaultImage(image.dataset.imagePath));
     return;
   }
   const button = event.target.closest('[data-note-path]');
   if (!button) return;
   const note = directoryEntries.find((entry) => entry.path === button.dataset.notePath && entry.type === 'file')
     || vaultSearchResults?.find((entry) => entry.path === button.dataset.notePath);
-  if (note) openNote(note);
+  if (note) runUiAction('Could not open that note.', () => openNote(note));
 });
 elements.recentNoteList.addEventListener('click', (event) => {
   const button = event.target.closest('[data-note-path]');
   if (!button) return;
   const note = recentNotes.find((entry) => entry.path === button.dataset.notePath);
-  if (note) openNote(note);
+  if (note) runUiAction('Could not open that note.', () => openNote(note));
 });
 elements.readerContent.addEventListener('click', (event) => {
+  const image = event.target.closest('img[data-vault-path]');
+  if (image) {
+    runUiAction('Could not open that image.', () => openVaultImage(image.dataset.vaultPath));
+    return;
+  }
   const link = event.target.closest('a[href^="vault:"]');
   if (link) {
     event.preventDefault();
@@ -1554,7 +1702,7 @@ for (const field of [elements.title, elements.content]) {
 
 window.addEventListener('online', () => {
   setConnection('online', config ? 'Connected to GitHub' : 'Ready to connect');
-  void syncQueue();
+  runUiAction('Could not sync queued notes.', syncQueue);
 });
 window.addEventListener('offline', () => setConnection('offline', 'Offline · notes stay on this device'));
 window.addEventListener('beforeinstallprompt', (event) => {
@@ -1572,4 +1720,4 @@ if ('serviceWorker' in navigator) {
     .catch((error) => console.error('Service worker registration failed:', error));
 }
 
-void initialize();
+runUiAction('Could not initialize Pleronic.', initialize);

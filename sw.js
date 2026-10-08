@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pleronic-v22';
+const CACHE_NAME = 'pleronic-v25';
 const ASSETS = [
   './',
   './index.html',
@@ -41,10 +41,18 @@ self.addEventListener('fetch', (event) => {
       return fetch(event.request).then((response) => {
         if (response && response.ok && event.request.url.startsWith(self.location.origin)) {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          caches.open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, copy))
+            .catch((error) => console.error('Could not cache a fetched asset:', error));
         }
         return response;
-      }).catch(() => caches.match('./index.html'));
+      }).catch((error) => {
+        if (event.request.mode !== 'navigate') throw error;
+        return caches.match('./index.html').then((fallback) => {
+          if (!fallback) throw error;
+          return fallback;
+        });
+      });
     })
   );
 });

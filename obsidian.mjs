@@ -44,6 +44,59 @@ export function headingSlug(heading) {
     .replace(/\s+/g, '-');
 }
 
+function normalizedAttachmentPath(target, sourcePath) {
+  let decodedTarget = target.trim();
+  try {
+    decodedTarget = decodeURIComponent(decodedTarget);
+  } catch {
+    return null;
+  }
+  const absolute = decodedTarget.startsWith('/');
+  const sourceDirectory = sourcePath.includes('/') ? sourcePath.slice(0, sourcePath.lastIndexOf('/')) : '';
+  const segments = absolute ? [] : sourceDirectory.split('/').filter(Boolean);
+  for (const segment of decodedTarget.replace(/^\/+/, '').split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (segments.length === 0) return null;
+      segments.pop();
+    } else {
+      segments.push(segment);
+    }
+  }
+  return segments.join('/');
+}
+
+export function resolveAttachmentPath(target, sourcePath, imagePaths) {
+  const requested = normalizedAttachmentPath(target, sourcePath);
+  if (!requested) return null;
+  return imagePaths.find((path) => path.toLocaleLowerCase() === requested.toLocaleLowerCase()) || null;
+}
+
+export function resolveImageEmbeds(markdown, sourcePath, imagePaths) {
+  const protectedParts = [];
+  const protectedMarkdown = markdown.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)/g, (code) => {
+    const index = protectedParts.push(code) - 1;
+    return `\u0000CODE${index}\u0000`;
+  });
+  const withObsidianEmbeds = protectedMarkdown.replace(/!\[\[([^\]]+)\]\]/g, (match, contents) => {
+    const [target, alias] = contents.split('|', 2);
+    const path = resolveAttachmentPath(target, sourcePath, imagePaths);
+    if (!path) return match;
+    const alt = (alias?.trim() || target.trim().split('/').at(-1)).replace(/[\\[\]]/g, '\\$&');
+    return `![${alt}](vault-attachment:${encodeURIComponent(path)})`;
+  });
+  const withMarkdownEmbeds = withObsidianEmbeds.replace(
+    /!\[([^\]]*)\]\((<[^>]+>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'))?\)/g,
+    (match, alt, rawTarget) => {
+      const target = rawTarget.startsWith('<') ? rawTarget.slice(1, -1) : rawTarget;
+      if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(target)) return match;
+      const path = resolveAttachmentPath(target, sourcePath, imagePaths);
+      return path ? `![${alt}](vault-attachment:${encodeURIComponent(path)})` : match;
+    }
+  );
+  return withMarkdownEmbeds.replace(/\u0000CODE(\d+)\u0000/g, (_, index) => protectedParts[Number(index)]);
+}
+
 export function extractObsidianFrontmatter(markdown) {
   const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!match) return { markdown, tags: [], frontmatter: null };
