@@ -354,7 +354,9 @@ function updateEditControls() {
   elements.editButton.textContent = currentNote?.draftContent !== null && currentNote?.draftContent !== undefined
     ? 'Continue draft'
     : 'Edit note';
-  elements.cancelEditButton.hidden = !currentNote?.editing;
+  const hasEditDraft = currentNote?.draftContent !== null && currentNote?.draftContent !== undefined;
+  elements.cancelEditButton.hidden = !currentNote?.editing && !hasEditDraft;
+  elements.cancelEditButton.textContent = 'Delete draft';
   elements.saveEditDraftButton.hidden = !currentNote?.editing;
   elements.saveEditDraftButton.disabled = editSaveInProgress;
   elements.saveEditButton.hidden = !currentNote?.editing;
@@ -1464,11 +1466,11 @@ function startEditingNote() {
 }
 
 async function cancelEditingNote() {
-  if (!currentNote?.editing) return;
-  if (elements.editContent.value !== currentNote.content || currentNote.conflict) {
-    if (!confirm('Discard this local edit draft? This cannot be undone.')) return;
+  if (!currentNote?.editing && (currentNote?.draftContent === null || currentNote?.draftContent === undefined)) return;
+  if (!confirm('Delete this local edit draft? This cannot be undone.')) return;
+  if (currentNote.editing) {
+    clearTimeout(editDraftTimer);
   }
-  clearTimeout(editDraftTimer);
   await discardCurrentEditDraft();
 }
 
