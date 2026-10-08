@@ -180,6 +180,7 @@ function updateOnlineControls() {
 }
 
 function updateCaptureControls() {
+  elements.saveCaptureDraftButton.textContent = 'Save draft';
   elements.discardCaptureButton.hidden = !activeCaptureDraftId
     && !elements.title.value.trim()
     && !elements.content.value.trim();

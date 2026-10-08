@@ -89,15 +89,15 @@ Give your note a title, write in Markdown, and select **Save to vault**. The tit
 
 The folder shown below the save button is the current destination. Open the adjacent arrow to search and select any folder in the vault, or choose **Vault root**. The Settings default is included even if it has not been created yet; GitHub creates that folder when the note is saved.
 
-Pleronic requires a verified GitHub connection to save a note to the vault. If offline or disconnected, choose **Save as draft**; the note remains local until you reopen it and save while connected.
+Pleronic requires a verified GitHub connection to save a note to the vault. If offline or disconnected, choose **Save draft**; the note remains local until you reopen it and save while connected.
 
 ### Browse and read
 
 Open **Vault** to browse from the repository root. Select a folder to enter it, use the breadcrumbs to move to an ancestor, and open a Markdown file to read it. The reader's back link returns to the note's containing folder.
 
-Select **Save as draft** on the capture page to save a new note locally for later. The **Drafts** navigation tab lists those capture drafts alongside saved edits to existing notes; its badge shows the number of saved drafts. Select a capture draft to continue writing or an edit draft to reopen its note. Capture drafts are removed from the list when saved to GitHub.
+Select **Save draft** on the capture page to save a new note locally for later. The **Drafts** navigation tab lists those capture drafts alongside saved edits to existing notes; its badge shows the number of saved drafts. Select a capture draft to continue writing or an edit draft to reopen its note. Capture drafts are removed from the list when saved to GitHub.
 
-Typing on the capture page also keeps a temporary local recovery draft. Select **Save as draft** to make a separate, named entry in **Drafts** that you can reopen later. Capture drafts include the currently selected destination folder. Select **Discard** to clear the current capture and remove its saved draft, if it was reopened from Drafts.
+Typing on the capture page also keeps a temporary local recovery draft. Select **Save draft** to make a separate, named entry in **Drafts** that you can reopen later. Capture drafts include the currently selected destination folder. Select **Discard** to clear the current capture and remove its saved draft, if it was reopened from Drafts.
 
 Select **Edit note** to modify an existing file. Pleronic saves an edit draft on this device as you type; it is not sent to GitHub until you select **Save to vault**, which commits the update to your repository. Select **Save draft** to save locally and return to the containing folder. When an edit draft already exists, **Continue draft** and **Delete draft** are both available from the reader, so you can remove it without reopening the editor. Leaving the editor prompts you to save the draft or discard edits. The note is marked **Local draft** until it is saved to GitHub or deleted. Saving to GitHub requires a connection. The update includes the version SHA from when the note was read, so GitHub rejects it if another change has landed in the meantime. When that happens, Pleronic shows the newer remote version and offers **Keep my draft** or **Use remote version**. Keeping the draft allows a later save to replace the newer remote text; choosing the remote version deletes the local draft. You can copy your draft from the conflict panel. Edits are never silently queued for later upload.
 
