@@ -54,6 +54,17 @@ const elements = {
   readerBack: $('#reader-back'),
   readerBackLabel: $('#reader-back-label'),
   readerContent: $('#reader-content'),
+  readerActions: $('#reader-actions'),
+  editButton: $('#edit-note'),
+  cancelEditButton: $('#cancel-edit'),
+  saveEditButton: $('#save-edit'),
+  editStatus: $('#edit-status'),
+  noteEditor: $('#note-editor'),
+  editContent: $('#edit-note-content'),
+  editConflict: $('#edit-conflict'),
+  remoteNoteContent: $('#remote-note-content'),
+  copyLocalDraftButton: $('#copy-local-draft'),
+  acceptRemoteVersionButton: $('#accept-remote-version'),
   toast: $('#toast'),
   owner: $('#gh-owner'),
   repo: $('#gh-repo'),
@@ -80,6 +91,9 @@ let vaultSearchRun = 0;
 let markdownPathIndex = null;
 let markdownPathIndexKey = '';
 let currentView = 'capture';
+let currentNote = null;
+let editDraftTimer;
+let editSaveInProgress = false;
 let syncInProgress = false;
 let toastTimer;
 let draftTimer;
@@ -169,6 +183,59 @@ function resetVaultNavigation() {
 function clientFromConfig(savedConfig = config) {
   if (!savedConfig) throw new Error('Connect a GitHub repository in Settings before syncing.');
   return new GitHubClient(savedConfig);
+}
+
+function vaultIdentity(savedConfig = config) {
+  return savedConfig ? `${savedConfig.owner}/${savedConfig.repo}@${savedConfig.branch}` : '';
+}
+
+function editDraftKey(path, identity = vaultIdentity()) {
+  return `edit_draft:${identity}:${path}`;
+}
+
+function updateEditControls() {
+  const canEdit = Boolean(currentNote?.sha && currentNote.identity === vaultIdentity());
+  elements.readerActions.hidden = !currentNote;
+  elements.editButton.hidden = !canEdit || currentNote.editing;
+  elements.cancelEditButton.hidden = !currentNote?.editing;
+  elements.saveEditButton.hidden = !currentNote?.editing;
+  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict);
+  elements.noteEditor.classList.toggle('active', Boolean(currentNote?.editing));
+  elements.readerContent.hidden = Boolean(currentNote?.editing);
+  elements.editConflict.hidden = !currentNote?.conflict;
+}
+
+async function persistEditDraft() {
+  if (!currentNote?.editing || !currentNote.sha) return;
+  const draft = {
+    content: elements.editContent.value,
+    baseSha: currentNote.sha,
+    updatedAt: new Date().toISOString()
+  };
+  try {
+    await set(editDraftKey(currentNote.path, currentNote.identity), draft);
+    elements.editStatus.textContent = 'Draft saved on this device. It has not been sent to GitHub.';
+    return true;
+  } catch (error) {
+    console.error('Could not save the local edit draft:', error);
+    elements.editStatus.textContent = `Local draft could not be saved: ${error.message}`;
+    showToast(`Your edit could not be saved locally: ${error.message}`);
+    return false;
+  }
+}
+
+function scheduleEditDraftSave() {
+  clearTimeout(editDraftTimer);
+  elements.editStatus.textContent = 'Saving local draft…';
+  editDraftTimer = setTimeout(() => void persistEditDraft(), 250);
+}
+
+async function showEditConflict(remote) {
+  currentNote.conflict = remote;
+  elements.remoteNoteContent.textContent = remote.content;
+  elements.editStatus.textContent = 'GitHub has a newer version. Your draft is preserved locally.';
+  updateEditControls();
+  await persistEditDraft();
 }
 
 function updatePreview(markdown, target) {
@@ -263,7 +330,12 @@ function safeUrl(value, image) {
   }
 }
 
-function switchView(view) {
+async function switchView(view, draftAlreadySaved = false) {
+  if (!draftAlreadySaved && view !== currentView && currentNote?.editing && elements.editContent.value !== currentNote.content) {
+    if (!confirm('Keep your changes as a local draft on this device and leave the editor?')) return false;
+    clearTimeout(editDraftTimer);
+    if (!await persistEditDraft()) return false;
+  }
   currentView = view;
   $$('.view').forEach((section) => section.classList.toggle('active', section.id === `view-${view}`));
   $$('[data-view]').forEach((button) => {
@@ -272,6 +344,7 @@ function switchView(view) {
     button.setAttribute('aria-current', active ? 'page' : 'false');
   });
   if (view === 'inbox') fetchInbox();
+  return true;
 }
 
 function formatNoteTitle(name) {
@@ -849,37 +922,77 @@ async function syncQueuedNote(note, destination) {
 }
 
 async function openNote(note, heading = null) {
+  if (currentNote?.editing && elements.editContent.value !== currentNote.content) {
+    if (!confirm('Keep your changes as a local draft on this device and open this note?')) return;
+    clearTimeout(editDraftTimer);
+    if (!await persistEditDraft()) return;
+  }
   readerParentPath = note.path.split('/').slice(0, -1).join('/');
   const parentName = readerParentPath.split('/').at(-1);
   const backLabel = parentName ? `Back to ${parentName}` : 'Back to vault';
   elements.readerBackLabel.textContent = backLabel;
   elements.readerBack.setAttribute('aria-label', backLabel);
-  switchView('reader');
+  await switchView('reader', true);
   elements.readerTitle.textContent = formatNoteTitle(note.name);
   elements.readerMeta.textContent = note.path;
   elements.readerTags.replaceChildren();
   elements.readerTags.hidden = true;
   elements.readerContent.textContent = 'Loading note…';
+  elements.readerContent.hidden = false;
+  elements.editStatus.textContent = '';
+  elements.editConflict.hidden = true;
+  currentNote = {
+    path: note.path,
+    name: formatNoteTitle(note.name),
+    content: '',
+    sha: null,
+    identity: vaultIdentity(),
+    editing: false,
+    conflict: null
+  };
+  elements.editContent.value = '';
+  updateEditControls();
   const cacheKey = `note_cache:${note.path}`;
   try {
-    const markdown = await clientFromConfig().readNote(note.path);
-    await renderVaultNote(markdown, note.path);
+    const remote = await clientFromConfig().readNoteWithMetadata(note.path);
+    currentNote.content = remote.content;
+    currentNote.sha = remote.sha;
+    await renderVaultNote(remote.content, note.path);
     void recordRecentNote(note);
     try {
-      await set(cacheKey, markdown);
+      await set(cacheKey, remote.content);
     } catch (cacheError) {
       console.error('Could not cache the opened note:', cacheError);
       showToast(`Note opened, but its offline copy could not be saved: ${cacheError.message}`);
     }
+    try {
+      const draft = await get(editDraftKey(note.path, currentNote.identity));
+      if (draft && typeof draft.content === 'string' && typeof draft.baseSha === 'string') {
+        elements.editContent.value = draft.content;
+        if (draft.baseSha !== remote.sha) {
+          currentNote.sha = draft.baseSha;
+          currentNote.editing = true;
+          await showEditConflict(remote);
+        }
+        else if (draft.content !== remote.content) elements.editStatus.textContent = `Local draft restored · ${new Date(draft.updatedAt).toLocaleString()}`;
+        else await del(editDraftKey(note.path, currentNote.identity));
+      }
+    } catch (draftError) {
+      console.error('Could not restore the local edit draft:', draftError);
+      showToast(`Note opened, but its edit draft could not be restored: ${draftError.message}`);
+    }
+    updateEditControls();
   } catch (error) {
     console.error('Could not load the note from GitHub:', error);
     try {
       const cached = await get(cacheKey);
       if (typeof cached === 'string') {
+        currentNote.content = cached;
         await renderVaultNote(cached, note.path);
         void recordRecentNote(note);
         elements.readerMeta.textContent = `${note.path} · Offline copy`;
         showToast('Showing the last saved copy of this note.');
+        updateEditControls();
       } else {
         elements.readerContent.textContent = error.message;
         setConnection('error', 'Could not open this note');
@@ -888,11 +1001,145 @@ async function openNote(note, heading = null) {
       console.error('Could not read the cached note:', cacheError);
       elements.readerContent.textContent = `${error.message} (Offline cache unavailable: ${cacheError.message})`;
     }
+    elements.readerActions.hidden = true;
   }
   if (heading) {
     const target = elements.readerContent.querySelector(`#${CSS.escape(headingSlug(heading))}`);
     target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+}
+
+function startEditingNote() {
+  if (!currentNote?.sha || currentNote.identity !== vaultIdentity()) {
+    showToast('Reconnect to the same vault before editing this note.');
+    return;
+  }
+  currentNote.editing = true;
+  elements.editStatus.textContent = 'Changes are kept as a local draft until you save to GitHub.';
+  updateEditControls();
+  elements.editContent.focus();
+}
+
+async function cancelEditingNote() {
+  if (!currentNote?.editing) return;
+  if (elements.editContent.value !== currentNote.content || currentNote.conflict) {
+    if (!confirm('Discard this local edit draft? This cannot be undone.')) return;
+  }
+  clearTimeout(editDraftTimer);
+  try {
+    await del(editDraftKey(currentNote.path, currentNote.identity));
+  } catch (error) {
+    console.error('Could not discard the local edit draft:', error);
+    showToast(`The local edit draft could not be discarded: ${error.message}`);
+    return;
+  }
+  if (currentNote.conflict) {
+    currentNote.content = currentNote.conflict.content;
+    currentNote.sha = currentNote.conflict.sha;
+    try {
+      await set(`note_cache:${currentNote.path}`, currentNote.content);
+    } catch (error) {
+      console.error('Could not cache the latest remote note after discarding the draft:', error);
+      showToast(`Draft discarded, but the latest note could not be cached: ${error.message}`);
+    }
+  }
+  currentNote.editing = false;
+  currentNote.conflict = null;
+  elements.editContent.value = currentNote.content;
+  elements.editStatus.textContent = '';
+  updateEditControls();
+  await renderVaultNote(currentNote.content, currentNote.path);
+}
+
+async function saveEditedNote() {
+  if (!currentNote?.editing || !currentNote.sha || currentNote.conflict || editSaveInProgress) return;
+  if (!navigator.onLine) {
+    showToast('You are offline. Your edit remains saved as a local draft on this device.');
+    return;
+  }
+  if (currentNote.identity !== vaultIdentity()) {
+    showToast('The connected vault changed. Reconnect to the original vault before saving this edit.');
+    return;
+  }
+
+  clearTimeout(editDraftTimer);
+  if (!await persistEditDraft()) return;
+  editSaveInProgress = true;
+  updateEditControls();
+  elements.editStatus.textContent = 'Saving to GitHub…';
+  let result;
+  try {
+    result = await clientFromConfig().updateNote(
+      currentNote.path,
+      elements.editContent.value,
+      currentNote.name,
+      currentNote.sha
+    );
+  } catch (error) {
+    console.error('Could not save the edited note:', error);
+    if (error instanceof GitHubApiError && [409, 422].includes(error.status)) {
+      try {
+        const latest = await clientFromConfig().readNoteWithMetadata(currentNote.path);
+        if (latest.sha !== currentNote.sha) {
+          await showEditConflict(latest);
+        } else {
+          elements.editStatus.textContent = `GitHub rejected the update: ${error.message}`;
+          showToast(`The note was not updated: ${error.message}`);
+        }
+      } catch (refreshError) {
+        console.error('Could not load the latest note after an update conflict:', refreshError);
+        elements.editStatus.textContent = `Could not verify the latest version. Your draft is saved locally: ${refreshError.message}`;
+        showToast(`Could not verify the conflict; your local draft is preserved: ${refreshError.message}`);
+      }
+    } else {
+      elements.editStatus.textContent = `Save failed. Your local draft is preserved: ${error.message}`;
+      showToast(`The note was not confirmed as saved. Your local draft remains on this device: ${error.message}`);
+    }
+    editSaveInProgress = false;
+    updateEditControls();
+    return;
+  }
+
+  currentNote.content = elements.editContent.value;
+  currentNote.sha = result.sha;
+  currentNote.editing = false;
+  currentNote.conflict = null;
+  updateEditControls();
+  let localCleanupError = null;
+  try {
+    await del(editDraftKey(currentNote.path, currentNote.identity));
+    await set(`note_cache:${currentNote.path}`, currentNote.content);
+  } catch (error) {
+    console.error('The note was saved, but local cleanup failed:', error);
+    localCleanupError = error;
+  }
+  try {
+    await renderVaultNote(currentNote.content, currentNote.path);
+  } catch (error) {
+    console.error('The note was saved, but the updated preview could not be rendered:', error);
+    elements.readerContent.textContent = currentNote.content;
+  }
+  editSaveInProgress = false;
+  elements.editStatus.textContent = '';
+  updateEditControls();
+  showToast(localCleanupError
+    ? `Note saved to GitHub, but local draft/cache cleanup failed: ${localCleanupError.message}`
+    : 'Note updated in GitHub. The change is recorded in your repository history.');
+}
+
+async function acceptRemoteVersion() {
+  if (!currentNote?.conflict) return;
+  const remote = currentNote.conflict;
+  currentNote.sha = remote.sha;
+  currentNote.content = remote.content;
+  currentNote.conflict = null;
+  if (!await persistEditDraft()) {
+    currentNote.conflict = remote;
+    updateEditControls();
+    return;
+  }
+  elements.editStatus.textContent = 'Latest GitHub version accepted as the baseline. Your reconciled text is still a local draft.';
+  updateEditControls();
 }
 
 async function renderVaultNote(markdown, path) {
@@ -1038,7 +1285,21 @@ elements.readerBack.addEventListener('click', () => {
   currentDirectory = readerParentPath;
   elements.search.value = '';
   clearVaultSearch();
-  switchView('inbox');
+  void switchView('inbox');
+});
+elements.editButton.addEventListener('click', startEditingNote);
+elements.cancelEditButton.addEventListener('click', () => void cancelEditingNote());
+elements.saveEditButton.addEventListener('click', () => void saveEditedNote());
+elements.editContent.addEventListener('input', scheduleEditDraftSave);
+elements.acceptRemoteVersionButton.addEventListener('click', () => void acceptRemoteVersion());
+elements.copyLocalDraftButton.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(elements.editContent.value);
+    showToast('Your local draft was copied to the clipboard.');
+  } catch (error) {
+    console.error('Could not copy the local edit draft:', error);
+    showToast(`Could not copy your draft: ${error.message}`);
+  }
 });
 elements.form.addEventListener('submit', saveNote);
 elements.saveFolderToggle.addEventListener('click', openSaveFolderMenu);

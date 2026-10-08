@@ -173,6 +173,15 @@
       .reader-title { margin-bottom: 8px; overflow-wrap: anywhere; }
       .reader-meta { margin-bottom: 22px; color: var(--muted); font-size: 12px; }
       .reader-card { line-height: 1.75; overflow-wrap: anywhere; }
+      .reader-actions { display: flex; flex-wrap: wrap; gap: 9px; margin: -8px 0 18px; }
+      .note-editor { display: none; }
+      .note-editor.active { display: block; }
+      .note-editor textarea { min-height: min(60vh, 620px); }
+      .edit-status { min-height: 1.5em; margin: 9px 0 0; color: var(--muted); font-size: 11px; }
+      .edit-conflict { margin: 0 0 16px; padding: 14px; border: 1px solid #e4c8b0; border-radius: 9px; background: #fff8ef; color: #654c38; font-size: 12px; line-height: 1.55; }
+      .edit-conflict[hidden] { display: none; }
+      .edit-conflict pre { max-height: 280px; overflow: auto; padding: 11px; border-radius: 6px; background: #f4ece1; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .edit-conflict .button-row { margin-top: 10px; }
       .toast { position: fixed; right: 20px; bottom: 20px; z-index: 5; max-width: min(440px, calc(100vw - 40px)); padding: 12px 16px; transform: translateY(12px); border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); color: var(--ink); font-size: 12px; line-height: 1.5; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; }
       .toast.active { transform: translateY(0); opacity: 1; }
       .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
@@ -355,6 +364,25 @@
           <h1 class="reader-title" id="reader-title"></h1>
           <p class="reader-meta" id="reader-meta"></p>
           <div class="reader-tags" id="reader-tags" aria-label="Note tags" hidden></div>
+          <div class="reader-actions" id="reader-actions" hidden>
+            <button class="button secondary" id="edit-note" type="button">Edit note</button>
+            <button class="button secondary" id="cancel-edit" type="button" hidden>Cancel editing</button>
+            <button class="button" id="save-edit" type="button" hidden>Save changes</button>
+          </div>
+          <p class="edit-status" id="edit-status" role="status" aria-live="polite"></p>
+          <section class="edit-conflict" id="edit-conflict" aria-labelledby="edit-conflict-title" hidden>
+            <strong id="edit-conflict-title">The note changed on GitHub.</strong>
+            <p>A newer remote version is shown below. Your local draft is preserved. Compare both versions, reconcile the text in the editor, then confirm to use the latest version as the save baseline.</p>
+            <pre id="remote-note-content"></pre>
+            <div class="button-row">
+              <button class="button secondary" id="copy-local-draft" type="button">Copy my draft</button>
+              <button class="button" id="accept-remote-version" type="button">I’ve reconciled; continue</button>
+            </div>
+          </section>
+          <div class="note-editor" id="note-editor">
+            <label class="sr-only" for="edit-note-content">Edit note Markdown</label>
+            <textarea id="edit-note-content" spellcheck="false"></textarea>
+          </div>
           <article class="reader-card markdown" id="reader-content"></article>
         </section>
       </main>

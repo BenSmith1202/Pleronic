@@ -6,6 +6,7 @@ Notable changes to Pleronic are documented here.
 
 ### Added
 
+- Added an editor for existing Markdown notes with device-local drafts, explicit conflict reconciliation, and SHA-guarded updates that preserve ordinary Git history.
 - Added Pleronic forest-themed artwork and install icons.
 - Added folder browsing with breadcrumbs and a Markdown note reader.
 - Added Obsidian wiki-link navigation for notes, aliases, and headings.

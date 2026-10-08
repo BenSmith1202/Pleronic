@@ -182,6 +182,38 @@ export class GitHubClient {
     return decodeUtf8Base64(file.content);
   }
 
+  async readNoteWithMetadata(path) {
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const ref = new URLSearchParams({ ref: this.config.branch }).toString();
+    const file = await this.request(`${this.repositoryPath}/contents/${encodedPath}?${ref}`);
+    if (file.encoding !== 'base64' || typeof file.content !== 'string' || typeof file.sha !== 'string') {
+      throw new Error('GitHub returned an unsupported note format.');
+    }
+    return {
+      content: decodeUtf8Base64(file.content),
+      sha: file.sha
+    };
+  }
+
+  async updateNote(path, content, title, sha) {
+    if (typeof sha !== 'string' || !sha) throw new Error('A note SHA is required to safely update an existing file.');
+    const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+    const response = await this.request(`${this.repositoryPath}/contents/${encodedPath}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `Update note: ${title}`,
+        content: encodeUtf8Base64(content),
+        sha,
+        branch: this.config.branch
+      })
+    });
+    if (response.content?.path !== path || typeof response.content.sha !== 'string') {
+      throw new Error('GitHub did not confirm that the updated note was saved.');
+    }
+    return { sha: response.content.sha };
+  }
+
   async searchNotes(query, paths, onProgress = () => {}) {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     if (!normalizedQuery) return [];

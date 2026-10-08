@@ -24,6 +24,8 @@ Pleronic is a static progressive web app (PWA) for sending Markdown notes to a G
 - **Search the whole vault** by note title or Markdown content, with matching-line snippets and progress.
 - **Pick up where you left off.** The five most recently viewed notes are kept locally for each vault and branch.
 - **Read Obsidian-flavored Markdown**, including wiki links (`[[Note]]`), aliases (`[[Note|label]]`), heading links (`[[Note#Heading]]`), and visual tag chips.
+- **Edit existing notes** in a Markdown editor with local draft recovery and SHA-guarded GitHub updates. Each saved edit is a normal commit in your repository history.
+- **Resolve concurrent edits safely.** If GitHub’s version changed since you opened a note, Pleronic keeps your draft, shows the latest remote version, and requires you to reconcile it before saving.
 - **Install it like an app** on supported browsers and devices.
 
 The interface uses a cool forest-green and blue palette and is designed to work on small screens as well as desktop.
@@ -88,6 +90,8 @@ If GitHub is unavailable, Pleronic can save the note to a local sync queue and t
 
 Open **Vault** to browse from the repository root. Select a folder to enter it, use the breadcrumbs to move to an ancestor, and open a Markdown file to read it. The reader's back link returns to the note's containing folder.
 
+Select **Edit note** to modify an existing file. Pleronic saves an edit draft on this device as you type; it is not sent to GitHub until you select **Save changes**. Saving requires a connection. The update includes the version SHA from when the note was read, so GitHub rejects it if another change has landed in the meantime. In that case, Pleronic keeps your draft and shows the newer version. Compare them, reconcile your text, and explicitly confirm **I’ve reconciled; continue** before trying the save again. You can copy your draft from the conflict panel. Edits are never silently queued for later upload.
+
 Supported wiki-link forms include:
 
 ```markdown
@@ -114,6 +118,7 @@ After opening the HTTPS-hosted app, use your browser's **Install app** or **Add 
 After the app shell has loaded, the service worker caches the interface and its local modules. While offline:
 
 - Drafts and notes waiting to sync remain on this device.
+- Existing-note edit drafts are saved locally and are never automatically uploaded later. Reopen the note while online to compare a saved draft with GitHub.
 - Pleronic retries queued note sync when the connection returns.
 - Previously opened notes may be available from their saved local copy.
 - Browsing the GitHub repository and searching its contents require a connection.
@@ -133,7 +138,6 @@ Recent-note history and drafts are stored in the browser/device that created the
 
 Pleronic is a lightweight companion, not a complete Obsidian replacement:
 
-- It does not edit existing vault notes.
 - Obsidian plugins, Dataview, canvas files, and other plugin-generated views are not rendered.
 - Embedded vault images and attachments are not currently resolved or previewed.
 - Only Markdown files are shown in the folder browser and searched.

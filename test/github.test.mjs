@@ -112,6 +112,70 @@ test('createNote writes UTF-8 content to the configured branch and creates the d
   assert.equal(decodeUtf8Base64(body.content), 'Café 🌿');
 });
 
+test('readNoteWithMetadata returns the file content and SHA for conditional updates', async () => {
+  const client = new GitHubClient(config, async () => response(200, {
+    encoding: 'base64',
+    content: encodeUtf8Base64('Original note'),
+    sha: 'original-sha'
+  }));
+
+  assert.deepEqual(await client.readNoteWithMetadata('notes/inbox/Forest Notes.md'), {
+    content: 'Original note',
+    sha: 'original-sha'
+  });
+});
+
+test('readNoteWithMetadata rejects a response without a SHA', async () => {
+  const client = new GitHubClient(config, async () => response(200, {
+    encoding: 'base64',
+    content: encodeUtf8Base64('Original note')
+  }));
+  await assert.rejects(client.readNoteWithMetadata('notes/inbox/Forest.md'), /unsupported note format/);
+});
+
+test('readNote remains compatible with content-only responses', async () => {
+  const client = new GitHubClient(config, async () => response(200, {
+    encoding: 'base64',
+    content: encodeUtf8Base64('Original note')
+  }));
+  assert.equal(await client.readNote('notes/inbox/Forest.md'), 'Original note');
+});
+
+test('updateNote sends the original SHA and returns the new commit blob SHA', async () => {
+  let request;
+  const client = new GitHubClient(config, async (url, options) => {
+    request = { url, options };
+    return response(200, { content: { path: 'notes/inbox/Forest Notes.md', sha: 'updated-sha' } });
+  });
+
+  assert.deepEqual(await client.updateNote('notes/inbox/Forest Notes.md', 'Edited 🌲', 'Forest Notes', 'original-sha'), {
+    sha: 'updated-sha'
+  });
+  assert.equal(request.url, 'https://api.github.com/repos/octo-user/my-vault/contents/notes/inbox/Forest%20Notes.md');
+  const body = JSON.parse(request.options.body);
+  assert.equal(body.sha, 'original-sha');
+  assert.equal(body.branch, 'main');
+  assert.equal(body.message, 'Update note: Forest Notes');
+  assert.equal(decodeUtf8Base64(body.content), 'Edited 🌲');
+});
+
+test('updateNote requires the original SHA to prevent unconditional overwrites', async () => {
+  const client = new GitHubClient(config, async () => {
+    throw new Error('A request should not be sent without a SHA.');
+  });
+  await assert.rejects(client.updateNote('notes/inbox/Forest.md', 'Edited', 'Forest', ''), /SHA is required/);
+});
+
+test('updateNote preserves GitHub conflicts for safe recovery', async () => {
+  const client = new GitHubClient(config, async () => response(409, { message: 'sha does not match' }));
+  await assert.rejects(client.updateNote('notes/inbox/Forest.md', 'Edited', 'Forest', 'stale-sha'), (error) => {
+    assert.ok(error instanceof GitHubApiError);
+    assert.equal(error.status, 409);
+    assert.match(error.message, /sha does not match/);
+    return true;
+  });
+});
+
 test('listNotes uses the configured branch and only returns Markdown files', async () => {
   let requestedUrl;
   const client = new GitHubClient(config, async (url) => {
