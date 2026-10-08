@@ -1,33 +1,158 @@
-# Pleronic
+<div align="center">
+  <img src="./icon-512.png" alt="Pleronic crystal-and-leaf app icon" width="144">
+  <h1>Pleronic</h1>
+  <p><strong>Your thoughts, straight to your vault.</strong></p>
+  <p>A calm, mobile-friendly way to capture notes and explore an Obsidian vault stored in GitHub.</p>
+</div>
 
-Pleronic is a small, mobile-friendly progressive web app for capturing Markdown notes directly into an Obsidian vault stored in a GitHub repository. It runs entirely in your browser; there is no app server.
+<p align="center">
+  <a href="https://github.com/BenSmith1202/Pleronic"><img alt="GitHub repository" src="https://img.shields.io/badge/GitHub-Pleronic-315f52?logo=github"></a>
+  <a href="https://github.com/BenSmith1202/Pleronic/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/BenSmith1202/Pleronic?color=4e7d91"></a>
+  <a href="./LICENSE"><img alt="ISC license" src="https://img.shields.io/badge/license-ISC-315f52"></a>
+  <img alt="Progressive web app" src="https://img.shields.io/badge/app-installable%20PWA-315f52">
+  <img alt="No app server" src="https://img.shields.io/badge/backend-none-4e7d91">
+</p>
 
-## Get started
+Pleronic is a static progressive web app (PWA) for sending Markdown notes to a GitHub-backed [Obsidian](https://obsidian.md/) vault and reading that vault from your phone or desktop. It talks directly to GitHub from your browser—there is no Pleronic server or account to set up.
 
-1. Serve the repository over HTTPS (for example, with GitHub Pages). Service workers and installable apps require a secure context; `http://localhost` is also supported for local development.
-2. Open the app and choose **Settings**.
-3. Create a GitHub fine-grained personal access token limited to your vault repository. Grant **Contents: read and write** access. GitHub may also require the repository's standard metadata access.
-4. Enter the repository owner, repository name, branch, inbox folder, and token. Select **Test connection** to check that the token can access the chosen branch, then save the settings.
-5. Capture a note. Notes are created as Markdown files named after their title in the configured inbox folder. Characters Obsidian cannot use in filenames are replaced with hyphens; use a unique title for each note in that folder. The default folder is `inbox`; GitHub creates it with the first saved note.
+## What you can do
 
-The **Vault** view browses folders and Markdown files across the configured repository, with breadcrumbs and a folder filter. It also keeps the five most recently viewed notes on this device and can search note titles and contents across the vault. Content search reads Markdown files through the GitHub API, so it can take time and use API requests in large vaults. Obsidian tags in frontmatter and note text are displayed as visual labels. Select a note to read it in the app. Obsidian `[[wiki links]]`, aliases such as `[[Note|label]]`, and heading links such as `[[Note#Heading]]` are supported. Links are resolved against the vault's Markdown file index, preferring the current folder and then the vault root. Markdown previews and note views sanitize HTML before displaying it.
+- **Capture notes** with a title and Markdown body. Notes are saved as `<title>.md` in your configured inbox folder.
+- **Keep writing offline.** Drafts are saved on the device, and notes waiting for a connection are queued for sync.
+- **Browse the vault** by folder, with breadcrumbs and a quick filter for the current folder.
+- **Search the whole vault** by note title or Markdown content, with matching-line snippets and progress.
+- **Pick up where you left off.** The five most recently viewed notes are kept locally for each vault and branch.
+- **Read Obsidian-flavored Markdown**, including wiki links (`[[Note]]`), aliases (`[[Note|label]]`), heading links (`[[Note#Heading]]`), and visual tag chips.
+- **Install it like an app** on supported browsers and devices.
 
-This is a lightweight reader, not a full Obsidian renderer: plugin-generated views, Dataview, and embedded attachments are not rendered. GitHub's recursive file index has a size limit; if it is truncated, folder navigation still works, but wiki links cannot be resolved.
+The interface uses a cool forest-green and blue palette and is designed to work on small screens as well as desktop.
 
-## Offline use
+## Try Pleronic
 
-After the app has been loaded once, the service worker caches the app shell. Drafts and notes waiting to sync are stored in this browser using IndexedDB. When the connection returns, Pleronic attempts to sync queued notes; you can also select **Sync now**. The inbox itself requires a connection unless a note has already been opened on this device.
+Pleronic is a static site. You can run your own copy locally or publish it with GitHub Pages. No backend, database, build step, or environment variables are required.
 
-Queued notes keep their original vault destination, so changing repositories in Settings will not silently redirect notes already waiting to sync. Notes captured before a vault is configured use the vault settings present when they are synced.
+### Run locally
 
-## Token and privacy
+1. Clone or download this repository.
+2. Serve the repository root over HTTP. For example, with Python:
 
-The GitHub token is saved in this browser's `localStorage` so the app can call the GitHub API directly. It is not sent to a Pleronic server (there is no server), but anyone with access to this browser profile or device may be able to use it. Use the app only over HTTPS, protect shared devices, and revoke the token from GitHub if the device is lost. Disconnecting removes the saved settings from this browser.
+   ```sh
+   python3 -m http.server 8000
+   ```
 
-## Development
+3. Open [http://localhost:8000](http://localhost:8000).
+4. Connect your vault in **Settings** (see [Connect a vault](#connect-a-vault)).
 
-This is a static web app; no build step is required. From the repository root, start any static HTTP server that serves `index.html`, then run:
+`localhost` is treated as a secure context by browsers, so the service worker and install-related features can be tested locally. Opening `index.html` directly as a `file://` URL is not supported.
+
+### Publish with GitHub Pages
+
+1. Fork this repository, or push your copy to a GitHub repository.
+2. In that repository, open **Settings → Pages**.
+3. Under **Build and deployment**, choose **Deploy from a branch**.
+4. Select the branch you want to publish (commonly `main`) and the repository root (`/`), then save.
+5. Wait for the Pages deployment to finish and open the URL shown in the Pages settings.
+6. Connect your Obsidian vault using the steps below.
+
+The published app must use HTTPS. When deploying from a project subpath, keep the app files together at the published root so the manifest, service worker, icons, and modules resolve relative to the app.
+
+## Connect a vault
+
+Pleronic uses a GitHub fine-grained personal access token to read and write Markdown files in one repository.
+
+1. In GitHub, create a fine-grained token restricted to the repository containing your vault.
+2. Grant **Contents: Read and write** permission. GitHub's standard repository metadata permission is also needed to identify the repository.
+3. In Pleronic, open **Settings** and enter:
+   - **GitHub owner** — your username or organization
+   - **Repository** — the repository name only, not its URL
+   - **Branch** — the branch containing the vault (usually `main`)
+   - **Inbox folder** — the folder for new captured notes (defaults to `inbox`; leave blank for the repository root)
+   - **Token** — the fine-grained personal access token
+4. Select **Test connection**, then save the settings.
+5. Open **Vault** to browse, read, and search your notes.
+
+The token must be able to read vault files for browsing, wiki links, and search, and write contents to save captured notes. Treat it like a password: create the narrowest token that works, and revoke it in GitHub if the device or browser profile is lost.
+
+## Using the app
+
+### Capture
+
+Give your note a title, write in Markdown, and select **Save to vault**. The title becomes the filename, with characters that cannot be used safely in filenames replaced by hyphens. Use a unique title within the destination folder; Pleronic does not silently overwrite an existing note.
+
+If GitHub is unavailable, Pleronic can save the note to a local sync queue and try again when you reconnect. Review the sync status and use **Sync now** if needed.
+
+### Browse and read
+
+Open **Vault** to browse from the repository root. Select a folder to enter it, use the breadcrumbs to move to an ancestor, and open a Markdown file to read it. The reader's back link returns to the note's containing folder.
+
+Supported wiki-link forms include:
+
+```markdown
+[[A note]]
+[[A note|the label to show]]
+[[A note#A heading]]
+[[#A heading in this note]]
+```
+
+Links are matched case-insensitively against the vault's Markdown file index. Pleronic checks the current note's folder first, then the vault root. Unresolved wiki links are displayed as plain text.
+
+Tags in note text and `tags` in YAML frontmatter are displayed as visual chips. They are decorative; they do not currently filter or link to other notes.
+
+### Search
+
+Use **Search the whole vault** to look for words or phrases in note titles and contents. Matching content includes a short line snippet. Search reads Markdown files through GitHub's Contents API, with up to four file reads in progress at once. A large vault can take a while and use a significant portion of your GitHub API quota. Searching requires a complete repository file index; if GitHub reports that the index is truncated, browsing still works but whole-vault search and wiki-link resolution may not.
+
+### Install
+
+After opening the HTTPS-hosted app, use your browser's **Install app** or **Add to Home Screen** option. Installation support and wording vary by browser. If you installed an earlier version, update the app by opening it online; if the launcher still shows an old icon, remove the existing shortcut and install it again.
+
+## Offline behavior
+
+After the app shell has loaded, the service worker caches the interface and its local modules. While offline:
+
+- Drafts and notes waiting to sync remain on this device.
+- Pleronic retries queued note sync when the connection returns.
+- Previously opened notes may be available from their saved local copy.
+- Browsing the GitHub repository and searching its contents require a connection.
+
+Recent-note history and drafts are stored in the browser/device that created them. They are not synced between devices.
+
+## Privacy and security
+
+- Pleronic has no application server. The app sends GitHub API requests directly from your browser.
+- The access token is stored in that browser's `localStorage`. Anyone with access to the same browser profile may be able to use it.
+- Use Pleronic only over HTTPS outside local development. Do not use a shared or untrusted device for a token with write access.
+- Disconnecting removes the saved connection settings from the current browser. For a lost device or exposed token, revoke the token in GitHub as well.
+- Note text is sent to GitHub for reading, searching, and saving. Search can make many API requests because it scans notes individually.
+- Rendered Markdown is sanitized before it is displayed. This is not a security boundary for protecting a compromised device or browser.
+
+## Current limitations
+
+Pleronic is a lightweight companion, not a complete Obsidian replacement:
+
+- It does not edit existing vault notes.
+- Obsidian plugins, Dataview, canvas files, and other plugin-generated views are not rendered.
+- Embedded vault images and attachments are not currently resolved or previewed.
+- Only Markdown files are shown in the folder browser and searched.
+- Tags are visual only; tag filtering is not implemented.
+- Vault access, browsing, and search depend on GitHub API availability, token permissions, and API limits.
+- Wiki links and whole-vault search rely on GitHub's recursive file index. For very large repositories the index may be truncated.
+
+## Development and tests
+
+Pleronic is plain HTML, CSS, and JavaScript modules; there is no compile or build step. The app shell uses locally vendored copies of `marked` for Markdown parsing and `idb-keyval` for IndexedDB storage.
+
+To install the development dependencies and run the tests:
 
 ```sh
+npm ci
 npm test
 ```
+
+Tests use Node's built-in test runner and cover GitHub API behavior, vault search, filename generation, wiki-link handling, heading slugs, and frontmatter tags.
+
+To contribute, open an [issue](https://github.com/BenSmith1202/Pleronic/issues) to report a bug or suggest a feature, or submit a pull request. Please include tests for behavior changes and never include a real GitHub token or private vault contents in an issue, test fixture, or screenshot.
+
+## License
+
+Pleronic is distributed under the [ISC License](./LICENSE). See [CHANGELOG.md](./CHANGELOG.md) for notable project updates.
