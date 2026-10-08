@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pleronic-v29';
+const CACHE_NAME = 'pleronic-v30';
 const ASSETS = [
   './',
   './index.html',
@@ -48,6 +48,7 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       }).catch((error) => {
+        // Only document navigations may fall back to the app shell; scripts and images must fail as themselves.
         if (event.request.mode !== 'navigate') throw error;
         return caches.match('./index.html').then((fallback) => {
           if (!fallback) throw error;

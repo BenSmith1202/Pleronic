@@ -49,6 +49,7 @@ const elements = {
   vaultSearchInput: $('#vault-search-input'),
   vaultSearchButton: $('#vault-search-button'),
   vaultSearchStatus: $('#vault-search-status'),
+  refreshInboxButton: $('#refresh-inbox'),
   recentNoteList: $('#recent-note-list'),
   myDraftsList: $('#my-drafts-list'),
   saveEditDraftButton: $('#save-edit-draft-button'),
@@ -86,6 +87,7 @@ const elements = {
   branch: $('#gh-branch'),
   folder: $('#gh-folder'),
   token: $('#gh-token'),
+  settingsPrompt: $('#settings-setup-prompt'),
   vaultName: $('#vault-name'),
   vaultBranch: $('#vault-branch')
 };
@@ -103,6 +105,7 @@ let vaultIndexGeneration = 0;
 let recentNotes = [];
 let vaultSearchResults = null;
 let vaultSearchRun = 0;
+let vaultSearchInProgress = false;
 let markdownPathIndex = null;
 let markdownPathIndexKey = '';
 let vaultImagePaths = null;
@@ -141,6 +144,7 @@ function showToast(message) {
 }
 
 function runUiAction(label, action) {
+  // Event handlers use this boundary so async failures are logged and shown instead of becoming unhandled rejections.
   void (async () => {
     try {
       await action();
@@ -154,6 +158,25 @@ function runUiAction(label, action) {
 function setConnection(state, label) {
   elements.connection.dataset.state = state;
   elements.connectionLabel.textContent = label;
+}
+
+function updateOnlineControls() {
+  const offline = !navigator.onLine;
+  elements.syncButton.disabled = syncInProgress || offline;
+  elements.vaultSearchButton.disabled = offline || vaultSearchInProgress;
+  elements.refreshInboxButton.disabled = offline;
+  $('#test-connection').disabled = offline;
+  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict) || offline;
+  elements.syncButton.title = offline ? 'Connect to the internet to sync queued notes.' : '';
+  elements.vaultSearchButton.title = offline ? 'Connect to the internet to search the vault.' : '';
+  elements.refreshInboxButton.title = offline ? 'Connect to the internet to refresh the vault.' : '';
+  $('#test-connection').title = offline ? 'Connect to the internet to test GitHub credentials.' : '';
+}
+
+async function promptForGitHubSetup(message) {
+  elements.settingsPrompt.textContent = message;
+  elements.settingsPrompt.hidden = false;
+  if (await switchView('settings')) elements.owner.focus();
 }
 
 function getQueue() {
@@ -194,7 +217,7 @@ function updateQueueStatus(queue) {
     ? '1 note is waiting to sync from this device.'
     : `${count} notes are waiting to sync from this device.`;
   elements.syncButton.textContent = syncInProgress ? 'Syncing…' : 'Sync now';
-  elements.syncButton.disabled = syncInProgress;
+  updateOnlineControls();
 }
 
 function updateVaultCard() {
@@ -239,7 +262,7 @@ function updateEditControls() {
   elements.saveEditDraftButton.hidden = !currentNote?.editing;
   elements.saveEditDraftButton.disabled = editSaveInProgress;
   elements.saveEditButton.hidden = !currentNote?.editing;
-  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict);
+  elements.saveEditButton.disabled = editSaveInProgress || Boolean(currentNote?.conflict) || !navigator.onLine;
   elements.noteEditor.classList.toggle('active', Boolean(currentNote?.editing));
   elements.readerContent.hidden = Boolean(currentNote?.editing);
   elements.editConflict.hidden = !currentNote?.conflict;
@@ -346,6 +369,7 @@ async function discardCurrentEditDraft() {
 async function prepareToLeaveEditor() {
   if (!currentNote?.editing) return true;
   const savedDraftContent = currentNote.draftContent ?? currentNote.content;
+  // A previously persisted draft is safe to leave; only edits made since that save need a decision.
   if (elements.editContent.value === savedDraftContent) {
     currentNote.editing = false;
     updateEditControls();
@@ -484,6 +508,12 @@ function safeUrl(value, image) {
 }
 
 async function switchView(view, draftAlreadyHandled = false) {
+  if (view === 'inbox' && !config) {
+    if (!draftAlreadyHandled && !await prepareToLeaveEditor()) return false;
+    elements.settingsPrompt.textContent = 'Enter your GitHub owner, repository, and fine-grained token below, then save settings. Use “Test connection” to verify access. Local capture and drafts remain available without connecting.';
+    elements.settingsPrompt.hidden = false;
+    return switchView('settings', true);
+  }
   if (!draftAlreadyHandled && view !== currentView && !await prepareToLeaveEditor()) return false;
   currentView = view;
   $$('.view').forEach((section) => section.classList.toggle('active', section.id === `view-${view}`));
@@ -598,6 +628,7 @@ async function refreshRecentNotes() {
 async function loadMyDrafts() {
   const identity = vaultIdentity();
   const storedKeys = await keys();
+  // New-note captures are vault-independent; existing-note edits belong to the configured vault and branch.
   const editPrefix = identity ? `edit_draft:${identity}:` : null;
   const draftKeys = storedKeys.filter((key) => typeof key === 'string'
     && (key.startsWith(CAPTURE_DRAFT_PREFIX) || (editPrefix && key.startsWith(editPrefix))));
@@ -666,11 +697,15 @@ function renderInbox() {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('strong');
-    heading.textContent = vaultSearchResults !== null
+    heading.textContent = !navigator.onLine
+      ? 'Folder contents are unavailable offline.'
+      : vaultSearchResults !== null
       ? 'No notes matched your search.'
       : query ? 'No folders or notes match that filter.' : 'This folder is empty.';
     const detail = document.createElement('span');
-    detail.textContent = vaultSearchResults !== null
+    detail.textContent = !navigator.onLine
+      ? 'Reconnect to GitHub to load this folder. Your local drafts and queued notes are still available.'
+      : vaultSearchResults !== null
       ? 'Try another search term.'
       : query ? 'Try another name.' : currentDirectory ? 'Try another folder or go back up a level.' : 'Capture a thought and it will land here.';
     empty.append(heading, detail);
@@ -683,6 +718,10 @@ function renderInbox() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'note-card';
+    if (!navigator.onLine && (entry.type === 'dir' || imageEntry)) {
+      button.disabled = true;
+      button.title = 'Reconnect to GitHub to browse folders or load images.';
+    }
     if (entry.type === 'dir') button.dataset.directoryPath = entry.path;
     else if (imageEntry) button.dataset.imagePath = entry.path;
     else button.dataset.notePath = entry.path;
@@ -721,27 +760,33 @@ function renderInbox() {
 
 function clearVaultSearch() {
   vaultSearchRun += 1;
+  vaultSearchInProgress = false;
   vaultSearchResults = null;
   elements.vaultSearchInput.value = '';
   elements.vaultSearchStatus.textContent = '';
-  elements.vaultSearchButton.disabled = false;
+  updateOnlineControls();
 }
 
 async function searchVault(event) {
   event.preventDefault();
+  if (!navigator.onLine) {
+    showToast('You’re offline. Reconnect to search your GitHub vault.');
+    return;
+  }
+  if (!config) {
+    await promptForGitHubSetup('Connect a GitHub vault before searching. Enter the owner, repository, and a fine-grained token below.');
+    return;
+  }
   const query = elements.vaultSearchInput.value.trim();
   if (!query) {
     elements.vaultSearchStatus.textContent = 'Enter a word or phrase to search for.';
     return;
   }
-  if (!config) {
-    elements.vaultSearchStatus.textContent = 'Connect a GitHub repository in Settings before searching.';
-    return;
-  }
 
   const run = ++vaultSearchRun;
+  vaultSearchInProgress = true;
+  updateOnlineControls();
   vaultSearchResults = [];
-  elements.vaultSearchButton.disabled = true;
   elements.directoryHeading.textContent = 'Vault search results';
   elements.noteList.replaceChildren();
   const loading = document.createElement('div');
@@ -772,7 +817,10 @@ async function searchVault(event) {
     failure.textContent = 'Could not search the vault. Check your GitHub connection and access.';
     elements.noteList.replaceChildren(failure);
   } finally {
-    if (run === vaultSearchRun) elements.vaultSearchButton.disabled = false;
+    if (run === vaultSearchRun) {
+      vaultSearchInProgress = false;
+      updateOnlineControls();
+    }
   }
 }
 
@@ -787,6 +835,13 @@ async function fetchInbox() {
   }
 
   elements.inboxDescription.textContent = `${config.owner}/${config.repo} · browse and edit`;
+  if (!navigator.onLine) {
+    elements.inboxDescription.textContent = `${config.owner}/${config.repo} · offline`;
+    elements.directoryHeading.textContent = currentDirectory.split('/').at(-1) || 'Vault root';
+    renderBreadcrumbs();
+    renderInbox();
+    return;
+  }
   elements.noteList.replaceChildren();
   const loading = document.createElement('div');
   loading.className = 'empty-state';
@@ -821,6 +876,7 @@ function renderBreadcrumbs() {
   root.className = currentDirectory ? 'breadcrumb' : 'breadcrumb breadcrumb-current';
   root.textContent = config?.repo || 'Vault';
   root.dataset.directoryPath = '';
+  root.disabled = !navigator.onLine;
   elements.breadcrumbs.append(root);
 
   const parts = currentDirectory.split('/').filter(Boolean);
@@ -837,6 +893,7 @@ function renderBreadcrumbs() {
     crumb.className = index === parts.length - 1 ? 'breadcrumb breadcrumb-current' : 'breadcrumb';
     crumb.textContent = part;
     crumb.dataset.directoryPath = path;
+    crumb.disabled = !navigator.onLine;
     elements.breadcrumbs.append(crumb);
   });
 }
@@ -955,6 +1012,11 @@ async function openSaveFolderMenu() {
     elements.saveFolderSearch.focus();
     return;
   }
+  if (!navigator.onLine) {
+    elements.saveFolderStatus.textContent = 'Offline: choose from folders already available, or enter a destination when you reconnect.';
+    elements.saveFolderSearch.focus();
+    return;
+  }
 
   const selectedConfigKey = vaultIndexKey();
   elements.saveFolderStatus.textContent = 'Loading vault folders…';
@@ -1008,6 +1070,7 @@ async function saveCaptureDraft() {
     return;
   }
 
+  // Explicitly saving promotes the temporary capture buffer to a persistent entry in the Drafts list.
   const id = activeCaptureDraftId || crypto.randomUUID();
   const key = `${CAPTURE_DRAFT_PREFIX}${id}`;
   elements.saveCaptureDraftButton.disabled = true;
@@ -1086,6 +1149,10 @@ async function saveNote(event) {
       folder: selectedSaveFolder
     } : null
   };
+  if (navigator.onLine && !config) {
+    await promptForGitHubSetup('Connect a GitHub vault before saving this note online. Your note remains in the capture editor while you set up access.');
+    return;
+  }
   elements.saveButton.disabled = true;
   elements.saveCaptureDraftButton.disabled = true;
   elements.saveFolderToggle.disabled = true;
@@ -1192,8 +1259,8 @@ async function syncQueue() {
     return;
   }
   if (!config) {
-    switchView('settings');
-    showToast('Connect a GitHub vault before syncing queued notes.');
+    await promptForGitHubSetup('Connect a GitHub vault before syncing queued notes. They will remain safely stored on this device.');
+    showToast('Queued notes are safe on this device until you connect a vault.');
     return;
   }
 
@@ -1241,6 +1308,10 @@ async function syncQueuedNote(note, destination) {
 }
 
 async function openNote(note, heading = null) {
+  if (!config) {
+    await promptForGitHubSetup('Connect a GitHub vault before opening notes.');
+    return;
+  }
   if (!await prepareToLeaveEditor()) return;
   readerParentPath = note.path.split('/').slice(0, -1).join('/');
   const parentName = readerParentPath.split('/').at(-1);
@@ -1341,7 +1412,7 @@ function startEditingNote() {
   }
   elements.editContent.value = currentNote.draftContent ?? currentNote.content;
   currentNote.editing = true;
-  elements.editStatus.textContent = 'Changes are kept as a local draft until you save to GitHub.';
+  elements.editStatus.textContent = '';
   updateEditControls();
   elements.editContent.focus();
 }
@@ -1363,6 +1434,10 @@ async function saveEditedNote() {
   }
   if (currentNote.identity !== vaultIdentity()) {
     showToast('The connected vault changed. Reconnect to the original vault before saving this edit.');
+    return;
+  }
+  if (!config) {
+    await promptForGitHubSetup('Reconnect to your GitHub vault before saving this edit. Your local draft remains on this device.');
     return;
   }
 
@@ -1521,6 +1596,14 @@ async function loadEmbeddedImages(notePath) {
 }
 
 async function openVaultImage(path) {
+  if (!navigator.onLine) {
+    showToast('You’re offline. Reconnect to load images from GitHub.');
+    return;
+  }
+  if (!config) {
+    await promptForGitHubSetup('Connect a GitHub vault before opening attachments.');
+    return;
+  }
   const request = ++imageViewerRequest;
   if (imageViewerUrl) {
     URL.revokeObjectURL(imageViewerUrl);
@@ -1629,6 +1712,7 @@ async function saveSettings(event) {
     const candidate = readSettingsForm();
     localStorage.setItem(CONFIG_KEY, JSON.stringify(candidate));
     config = candidate;
+    elements.settingsPrompt.hidden = true;
     resetVaultNavigation();
     populateSettingsForm();
     setConnection(navigator.onLine ? 'online' : 'offline', navigator.onLine ? 'Settings saved' : 'Saved for when you’re online');
@@ -1639,6 +1723,10 @@ async function saveSettings(event) {
 }
 
 async function testConnection() {
+  if (!navigator.onLine) {
+    showToast('You’re offline. Reconnect to test your GitHub credentials.');
+    return;
+  }
   const button = $('#test-connection');
   button.disabled = true;
   button.textContent = 'Checking…';
@@ -1647,6 +1735,7 @@ async function testConnection() {
     const branch = await new GitHubClient(candidate).testConnection();
     localStorage.setItem(CONFIG_KEY, JSON.stringify(candidate));
     config = candidate;
+    elements.settingsPrompt.hidden = true;
     resetVaultNavigation();
     populateSettingsForm();
     setConnection('online', `Connected · ${branch.name || candidate.branch}`);
@@ -1656,7 +1745,7 @@ async function testConnection() {
     setConnection('error', error instanceof GitHubApiError && error.status === 401 ? 'Token was rejected' : 'Connection test failed');
     showToast(error.message);
   } finally {
-    button.disabled = false;
+    updateOnlineControls();
     button.textContent = 'Test connection';
   }
 }
@@ -1665,11 +1754,14 @@ function disconnect() {
   if (!confirm('Remove the GitHub token and vault settings from this device? Queued notes stay here, but you’ll need to reconnect before they can sync.')) return;
   localStorage.removeItem(CONFIG_KEY);
   config = null;
+  elements.settingsPrompt.textContent = 'Connect a GitHub vault to browse, search, or sync notes. Local drafts and queued notes remain available on this device.';
+  elements.settingsPrompt.hidden = false;
   recentNotes = [];
   resetVaultNavigation();
   renderRecentNotes();
   populateSettingsForm();
   setConnection(navigator.onLine ? 'online' : 'offline', 'Not connected');
+  updateOnlineControls();
   showToast('Vault disconnected. Notes already queued remain on this device.');
 }
 
@@ -1724,7 +1816,8 @@ async function initialize() {
   $('#date-label').textContent = date.format(new Date());
   populateSettingsForm();
   updateInstallButton();
-  setConnection(navigator.onLine ? 'online' : 'offline', config ? 'Connected to GitHub' : 'Ready to connect');
+  setConnection(navigator.onLine ? 'online' : 'offline', config ? 'Connected to GitHub' : 'GitHub setup needed');
+  updateOnlineControls();
 
   try {
     const [queue, draft] = await Promise.all([getQueue(), get(DRAFT_KEY)]);
@@ -1914,10 +2007,16 @@ for (const field of [elements.title, elements.content]) {
 }
 
 window.addEventListener('online', () => {
-  setConnection('online', config ? 'Connected to GitHub' : 'Ready to connect');
-  runUiAction('Could not sync queued notes.', syncQueue);
+  setConnection('online', config ? 'Connected to GitHub' : 'GitHub setup needed');
+  updateOnlineControls();
+  if (config) runUiAction('Could not sync queued notes.', syncQueue);
+  if (currentView === 'inbox' && config) runUiAction('Could not refresh the vault.', fetchInbox);
 });
-window.addEventListener('offline', () => setConnection('offline', 'Offline · notes stay on this device'));
+window.addEventListener('offline', () => {
+  setConnection('offline', 'Offline · notes stay on this device');
+  updateOnlineControls();
+  if (currentView === 'inbox' && config) runUiAction('Could not update the offline vault view.', fetchInbox);
+});
 window.addEventListener('beforeinstallprompt', (event) => {
   event.preventDefault();
   deferredInstallPrompt = event;

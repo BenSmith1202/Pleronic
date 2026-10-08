@@ -76,6 +76,7 @@ export function noteFilename(title) {
 export class GitHubClient {
   constructor(config, fetchImpl = globalThis.fetch) {
     this.config = validateConfig(config);
+    // Native window.fetch requires its global receiver; binding also preserves that contract for injected fetches.
     this.fetch = fetchImpl.bind(globalThis);
     this.repositoryPath = `/repos/${encodeURIComponent(this.config.owner)}/${encodeURIComponent(this.config.repo)}`;
   }

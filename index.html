@@ -113,11 +113,10 @@
       .editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 17px; }
       .save-hint { color: var(--muted); font-size: 11px; line-height: 1.5; }
       .save-control { position: relative; display: grid; justify-items: end; gap: 6px; }
-      .save-actions { display: flex; }
-      .save-actions #save-note { border-radius: 8px 0 0 8px; }
-      .save-actions #save-capture-draft { border-color: var(--line); border-radius: 0; background: var(--surface); color: var(--ink); }
-      .save-actions #save-capture-draft:hover { background: #edf4f3; }
-      .save-actions .save-folder-toggle { min-width: 42px; padding: 9px 11px; border-left-color: rgb(255 255 255 / 28%); border-radius: 0 8px 8px 0; }
+      .save-actions { display: flex; align-items: center; gap: 8px; }
+      .save-main-actions { display: flex; }
+      .save-main-actions #save-note { border-radius: 8px 0 0 8px; }
+      .save-main-actions .save-folder-toggle { min-width: 42px; padding: 9px 11px; border-left-color: rgb(255 255 255 / 28%); border-radius: 0 8px 8px 0; }
       .save-folder-label { max-width: min(320px, 75vw); overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
       .save-folder-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 4; width: min(320px, calc(100vw - 56px)); padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); box-shadow: var(--shadow); }
       .save-folder-menu[hidden] { display: none; }
@@ -129,7 +128,7 @@
       .save-folder-status, .save-folder-empty { margin: 8px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
       .button { min-height: 42px; padding: 10px 16px; border: 1px solid transparent; border-radius: 8px; background: linear-gradient(125deg, var(--green), #3e6c79); color: #f7fbf9; font-size: 12px; font-weight: 700; }
       .button:hover { background: var(--green-dark); }
-      .button:disabled { cursor: wait; opacity: .6; }
+      .button:disabled { cursor: not-allowed; opacity: .6; }
       .button.secondary { border-color: var(--line); background: var(--surface); color: var(--ink); }
       .button.secondary:hover { background: #edf4f3; }
       .button.danger { border-color: #ead7d6; background: #fff9f8; color: var(--red); }
@@ -164,6 +163,7 @@
       .note-list { display: grid; gap: 9px; }
       .note-card { display: flex; align-items: center; gap: 14px; width: 100%; padding: 15px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: inherit; text-align: left; }
       .note-card:hover { border-color: #abc8c6; box-shadow: 0 5px 18px rgb(31 57 54 / 6%); }
+      .note-card:disabled { cursor: not-allowed; opacity: .65; }
       .note-file { display: grid; width: 35px; height: 35px; flex: 0 0 auto; place-items: center; border-radius: 9px; background: #e2edf0; color: var(--blue); font-size: 14px; }
       .note-info { display: grid; min-width: 0; gap: 5px; }
       .note-name { display: block; overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
@@ -178,6 +178,8 @@
       .settings-field.full { grid-column: 1 / -1; }
       .settings-field input { margin-bottom: 6px; }
       .settings-note { margin: 0; padding: 13px 14px; border-radius: 8px; background: #eaf1f1; color: #536d6c; font-size: 11px; line-height: 1.65; }
+      .settings-prompt { margin: 0 0 18px; padding: 13px 14px; border: 1px solid #c6dcda; border-radius: 8px; background: #e8f2ef; color: #315c54; font-size: 12px; line-height: 1.6; }
+      .settings-prompt[hidden] { display: none; }
       .reader-back { margin: -8px 0 20px; }
       .reader-title { margin-bottom: 8px; overflow-wrap: anywhere; }
       .reader-meta { margin-bottom: 22px; color: var(--muted); font-size: 12px; }
@@ -289,7 +291,7 @@
         <section class="view active" id="view-capture" aria-labelledby="capture-heading">
           <p class="eyebrow">A thought worth keeping</p>
           <h1 id="capture-heading">Catch it before it goes.</h1>
-          <p class="lead">A small note now, safely tucked into your Obsidian inbox for later.</p>
+          <p class="lead">Save straight to GitHub when online, or queue a note on this device to sync later. Drafts stay local until you choose to save them.</p>
           <form class="editor-card" id="capture-form">
             <label class="sr-only" for="note-title">Note title</label>
             <input class="title-input" id="note-title" name="title" type="text" maxlength="120" placeholder="Give this note a name…" autocomplete="off">
@@ -307,9 +309,11 @@
               <span class="save-hint" id="draft-status" aria-live="polite">Saved as a draft on this device</span>
               <div class="save-control">
                 <div class="save-actions">
-                  <button class="button" id="save-note" type="submit">Save to vault <span aria-hidden="true">↗</span></button>
                   <button class="button secondary" id="save-capture-draft" type="button">Save as draft</button>
-                  <button class="button save-folder-toggle" id="save-folder-toggle" type="button" aria-label="Choose note destination folder" aria-expanded="false" aria-controls="save-folder-menu">▾</button>
+                  <div class="save-main-actions">
+                    <button class="button" id="save-note" type="submit">Save to vault <span aria-hidden="true">↗</span></button>
+                    <button class="button save-folder-toggle" id="save-folder-toggle" type="button" aria-label="Choose note destination folder" aria-expanded="false" aria-controls="save-folder-menu">▾</button>
+                  </div>
                 </div>
                 <span class="save-folder-label" id="save-folder-label">Saving to inbox</span>
                 <div class="save-folder-menu" id="save-folder-menu" hidden>
@@ -365,6 +369,7 @@
           <p class="eyebrow">A home for your notes</p>
           <h1 id="settings-heading">Vault settings.</h1>
           <p class="lead">Connect a GitHub repository to send notes straight to your vault.</p>
+          <p class="settings-prompt" id="settings-setup-prompt" role="status" aria-live="polite" hidden></p>
           <form class="settings-card" id="settings-form">
             <div class="settings-grid">
               <div class="settings-field">
@@ -430,7 +435,7 @@
             <button class="button secondary" id="edit-note" type="button">Edit note</button>
             <button class="button secondary" id="save-edit-draft-button" type="button" hidden>Save draft</button>
             <button class="button secondary" id="cancel-edit" type="button" hidden>Cancel editing</button>
-            <button class="button" id="save-edit" type="button" hidden>Save changes</button>
+            <button class="button" id="save-edit" type="button" hidden>Save to vault <span aria-hidden="true">↗</span></button>
           </div>
           <p class="edit-status" id="edit-status" role="status" aria-live="polite"></p>
           <section class="edit-conflict" id="edit-conflict" aria-labelledby="edit-conflict-title" hidden>

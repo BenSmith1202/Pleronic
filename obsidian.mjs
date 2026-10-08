@@ -74,6 +74,7 @@ export function resolveAttachmentPath(target, sourcePath, imagePaths) {
 
 export function resolveImageEmbeds(markdown, sourcePath, imagePaths) {
   const protectedParts = [];
+  // Do not rewrite embed-looking text inside examples or inline code.
   const protectedMarkdown = markdown.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)/g, (code) => {
     const index = protectedParts.push(code) - 1;
     return `\u0000CODE${index}\u0000`;

@@ -6,6 +6,7 @@ Notable changes to Pleronic are documented here.
 
 ### Added
 
+- Disable GitHub-only actions while offline, guide unconfigured users to GitHub settings, and make capture-draft and GitHub-publish actions clearer.
 - Preview AVIF, GIF, JPEG, PNG, and WebP attachments from vault folders and Markdown/Obsidian image embeds, with a 20 MB per-image limit.
 - Added an editor for existing Markdown notes with device-local drafts, explicit conflict reconciliation, and SHA-guarded updates that preserve ordinary Git history.
 - Added an explicit **Save draft** action and a dedicated **Drafts** navigation page for saved edits to existing notes.
@@ -28,6 +29,7 @@ Notable changes to Pleronic are documented here.
 
 ### Changed
 
+- Made vault breadcrumbs navigable so selecting a breadcrumb opens that folder.
 - Show an inline “Attachment couldn't be loaded” message when an image cannot be fetched or decoded, avoid serving the app shell for failed offline asset requests, and surface unexpected async action failures.
 - Reworked the capture experience as a mobile-friendly installable PWA.
 - Notes use the supplied title as the Markdown filename; existing notes are not silently overwritten.
