@@ -957,6 +957,7 @@ async function openNote(note, heading = null) {
     const remote = await clientFromConfig().readNoteWithMetadata(note.path);
     currentNote.content = remote.content;
     currentNote.sha = remote.sha;
+    elements.editContent.value = remote.content;
     await renderVaultNote(remote.content, note.path);
     void recordRecentNote(note);
     try {
